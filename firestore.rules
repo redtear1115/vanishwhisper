@@ -39,15 +39,20 @@ service cloud.firestore {
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt']);
     }
 
-    // Phase 1 — ChatMessages: only session participants can read (per-doc
-    // rule applies to list queries — clients must filter by SessionID).
-    // Create only by a session participant; the message must be tagged
-    // with the sender's own UID. Update is the vanish lifecycle: only the
-    // recipient (i.e. not the sender) may set ReadAt (first read) and then
-    // DeletedAt (countdown elapsed). Each write is a single field equal to
-    // server time, so a tampering sender cannot forge an early-vanish, and
-    // a malicious recipient cannot replay an older read timestamp to trigger
-    // an instant vanish on the sender's view.
+    // ChatMessages: only session participants can read (per-doc rule applies
+    // to list queries — clients must filter by SessionID). Create only by a
+    // session participant; the message must be tagged with the sender's own
+    // UID. Update covers the vanish lifecycle plus phase 2 sender-unsend and
+    // reactions — each branch pins to a single affected key to keep writes
+    // narrow:
+    //   (a) Phase 1 — recipient first-reads (ReadAt == request.time)
+    //   (b) Phase 1 — recipient auto-vanishes after read (DeletedAt;
+    //       requires ReadAt already present)
+    //   (c) Phase 2 — sender unsends their own message (DeletedAt; no ReadAt
+    //       prerequisite — sender can pull the rug at any time)
+    //   (d) Phase 2 — either participant toggles a Reactions[emoji] entry.
+    //       Plaintext map; not strictly limiting which uid is added/removed
+    //       because in a 2-party chat there's no third uid to forge.
     match /ChatMessages/{messageId} {
       allow read: if request.auth != null && isParticipant(resource.data.SessionID);
       allow create: if request.auth != null
@@ -55,19 +60,32 @@ service cloud.firestore {
                     && isParticipant(request.resource.data.SessionID);
       allow update: if request.auth != null
                     && isParticipant(resource.data.SessionID)
-                    && request.auth.uid != resource.data.UserID
                     && (
                       // (a) recipient sets ReadAt for the first time
                       (
-                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ReadAt'])
+                        request.auth.uid != resource.data.UserID
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ReadAt'])
                         && request.resource.data.ReadAt == request.time
                       )
                       ||
                       // (b) recipient sets DeletedAt after ReadAt was set
                       (
-                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeletedAt'])
+                        request.auth.uid != resource.data.UserID
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeletedAt'])
                         && 'ReadAt' in resource.data
                         && request.resource.data.DeletedAt == request.time
+                      )
+                      ||
+                      // (c) sender unsends their own message
+                      (
+                        request.auth.uid == resource.data.UserID
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeletedAt'])
+                        && request.resource.data.DeletedAt == request.time
+                      )
+                      ||
+                      // (d) either participant toggles a reaction
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Reactions'])
                       )
                     );
     }

@@ -1,6 +1,9 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   doc,
+  FieldPath,
   onSnapshot,
   orderBy,
   query,
@@ -24,6 +27,7 @@ export interface ChatMessageRow {
   createdAt: Date | null
   readAt: Date | null
   deletedAt: Date | null
+  reactions: Record<string, string[]> // emoji -> uids; plaintext per Phase 2 design
 }
 
 export async function sendMessage(
@@ -88,6 +92,7 @@ export function subscribeMessages(
             createdAt: (data.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
             readAt: (data.ReadAt as Timestamp | undefined)?.toDate() ?? null,
             deletedAt: (data.DeletedAt as Timestamp | undefined)?.toDate() ?? null,
+            reactions: (data.Reactions as Record<string, string[]> | undefined) ?? {},
           })
         }),
       )
@@ -101,12 +106,10 @@ export function subscribeMessages(
   )
 }
 
-// Vanish lifecycle. Only the recipient is permitted to write these fields
-// (Firestore rules enforce: sender !== writer, single-field write, value ===
-// request.time). The countdown duration is computed by both clients locally
-// from the recipient's DeletedInMinutes; the recipient is also responsible for
-// writing DeletedAt when the timer elapses, so a tampering sender cannot
-// vanish their own message early.
+// Vanish lifecycle. ReadAt and the auto-vanish DeletedAt are recipient-only
+// (Firestore rules: sender !== writer, single-field write, value ==
+// request.time). deleteMessage() is the sender-initiated unsend — same
+// DeletedAt field, separate rule path that requires sender == writer.
 
 export async function markRead(messageId: string): Promise<void> {
   await updateDoc(doc(db, 'ChatMessages', messageId), { ReadAt: serverTimestamp() })
@@ -114,6 +117,24 @@ export async function markRead(messageId: string): Promise<void> {
 
 export async function markDeleted(messageId: string): Promise<void> {
   await updateDoc(doc(db, 'ChatMessages', messageId), { DeletedAt: serverTimestamp() })
+}
+
+export async function deleteMessage(messageId: string): Promise<void> {
+  await updateDoc(doc(db, 'ChatMessages', messageId), { DeletedAt: serverTimestamp() })
+}
+
+// Reactions are plaintext (Phase 2 decision — emoji codepoints carry no
+// confidential payload and the threat model already names both participants).
+// Use FieldPath() rather than dot-notation so emoji keys never collide with
+// Firestore's path parser.
+export async function toggleReaction(
+  messageId: string,
+  emoji: string,
+  hasMine: boolean,
+): Promise<void> {
+  const me = getIdentity()
+  const op = hasMine ? arrayRemove(me.uid) : arrayUnion(me.uid)
+  await updateDoc(doc(db, 'ChatMessages', messageId), new FieldPath('Reactions', emoji), op)
 }
 
 async function tryDecrypt(sessionKey: CryptoKey, contextBase64: string): Promise<string | null> {

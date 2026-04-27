@@ -2,14 +2,18 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getIdentity } from '../identity'
 import {
+  deleteMessage,
   markDeleted,
   markRead,
   sendMessage,
   subscribeMessages,
+  toggleReaction,
   type ChatMessageRow,
 } from '../messages'
 import { openSession, type OpenSession } from '../sessions'
 import { getDeletedInMinutes } from '../users'
+
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 
 const props = defineProps<{ id: string }>()
 
@@ -29,6 +33,10 @@ const otherMinutes = ref<number | null>(null)
 // not re-fire it. Same for markDeleted at expiry.
 const readFired = new Set<string>()
 const deletedFired = new Set<string>()
+
+// Per-message reaction picker state. Only one open at a time keeps the UI
+// uncluttered for a phase 2 first cut.
+const pickerOpenFor = ref<string | null>(null)
 
 let unsub: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
@@ -71,7 +79,9 @@ onUnmounted(() => {
 
 function ackUnread(rows: ChatMessageRow[]): void {
   for (const m of rows) {
-    if (m.fromMe || m.readAt || readFired.has(m.id)) continue
+    // Skip already-deleted messages (sender unsent before we got here, or
+    // recipient's previous tab already vanished) — no point acking a dead doc.
+    if (m.fromMe || m.readAt || m.deletedAt || readFired.has(m.id)) continue
     readFired.add(m.id)
     markRead(m.id).catch((err) => {
       readFired.delete(m.id) // allow retry on the next snapshot
@@ -137,6 +147,31 @@ function vanishLabel(m: ChatMessageRow): string {
   const seconds = totalSeconds % 60
   return `vanishes in ${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
+
+function iReacted(m: ChatMessageRow, emoji: string): boolean {
+  if (!opened.value) return false
+  return m.reactions[emoji]?.includes(opened.value.myUid) ?? false
+}
+
+function reactionCount(m: ChatMessageRow, emoji: string): number {
+  return m.reactions[emoji]?.length ?? 0
+}
+
+async function onReact(messageId: string, emoji: string, hasMine: boolean): Promise<void> {
+  try {
+    await toggleReaction(messageId, emoji, hasMine)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function onDelete(messageId: string): Promise<void> {
+  try {
+    await deleteMessage(messageId)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
 </script>
 
 <template>
@@ -157,6 +192,29 @@ function vanishLabel(m: ChatMessageRow): string {
             · {{ m.createdAt?.toLocaleTimeString() ?? '…' }}
             · {{ vanishLabel(m) }}
           </span>
+          <button v-if="m.fromMe" type="button" @click="onDelete(m.id)" style="margin-left: 0.5em">
+            delete
+          </button>
+          <div style="margin-top: 0.25em">
+            <button
+              v-for="emoji in REACTION_EMOJIS"
+              v-show="reactionCount(m, emoji) > 0 || pickerOpenFor === m.id"
+              :key="emoji"
+              type="button"
+              :style="{ fontWeight: iReacted(m, emoji) ? 'bold' : 'normal', marginRight: '0.25em' }"
+              @click="onReact(m.id, emoji, iReacted(m, emoji))"
+            >
+              {{ emoji }}<span v-if="reactionCount(m, emoji) > 0"> {{ reactionCount(m, emoji) }}</span>
+            </button>
+            <button
+              v-if="pickerOpenFor !== m.id"
+              type="button"
+              @click="pickerOpenFor = m.id"
+            >
+              + react
+            </button>
+            <button v-else type="button" @click="pickerOpenFor = null">close</button>
+          </div>
         </li>
       </ul>
       <form @submit.prevent="send">
