@@ -15,11 +15,13 @@ service cloud.firestore {
 
     // Phase 1 — ChatSessions: creator must be Participant1 and the invitee
     // (Participant2) must be a different existing user. Either participant
-    // can `get` the session. `list` deferred to Phase 1 step 3.
+    // can `read` the session (covers `get` for opening + `list` for the
+    // sessions list, evaluated per doc — clients must filter their list
+    // query by Participant1 == uid or Participant2 == uid).
     match /ChatSessions/{sessionId} {
-      allow get: if request.auth != null
-                 && (resource.data.Participant1 == request.auth.uid
-                     || resource.data.Participant2 == request.auth.uid);
+      allow read: if request.auth != null
+                  && (resource.data.Participant1 == request.auth.uid
+                      || resource.data.Participant2 == request.auth.uid);
       allow create: if request.auth != null
                     && request.resource.data.Participant1 == request.auth.uid
                     && request.resource.data.Participant2 != request.auth.uid

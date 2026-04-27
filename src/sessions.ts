@@ -1,4 +1,18 @@
-import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore'
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+  type QuerySnapshot,
+  type Timestamp,
+} from 'firebase/firestore'
+import { onScopeDispose, ref, type Ref } from 'vue'
 import { db } from './firebase'
 import { getIdentity } from './identity'
 
@@ -36,6 +50,75 @@ export async function createSession(inviteeUid: string): Promise<string> {
     UpdatedAt: serverTimestamp(),
   })
   return sessionRef.id
+}
+
+export interface ChatSessionRow {
+  id: string
+  otherParticipant: string
+  name: string
+  createdAt: Date | null
+  updatedAt: Date | null
+}
+
+export function useSessions(): { sessions: Ref<ChatSessionRow[]>; error: Ref<unknown> } {
+  const me = getIdentity()
+  const sessions = ref<ChatSessionRow[]>([])
+  const error = ref<unknown>(null)
+  const map = new Map<string, ChatSessionRow>()
+
+  function rebuild() {
+    sessions.value = Array.from(map.values()).sort(
+      (a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0),
+    )
+  }
+
+  function applyChange(snap: QuerySnapshot<DocumentData>) {
+    snap.docChanges().forEach((change) => {
+      if (change.type === 'removed') {
+        map.delete(change.doc.id)
+      } else {
+        map.set(change.doc.id, toRow(change.doc, me.uid))
+      }
+    })
+    rebuild()
+  }
+
+  const onErr = (err: unknown) => {
+    error.value = err
+  }
+
+  // Two queries (Participant1==me, Participant2==me) merged client-side —
+  // simpler than Firestore `or()` queries and needs no composite index.
+  const unsub1 = onSnapshot(
+    query(collection(db, 'ChatSessions'), where('Participant1', '==', me.uid)),
+    applyChange,
+    onErr,
+  )
+  const unsub2 = onSnapshot(
+    query(collection(db, 'ChatSessions'), where('Participant2', '==', me.uid)),
+    applyChange,
+    onErr,
+  )
+
+  onScopeDispose(() => {
+    unsub1()
+    unsub2()
+  })
+
+  return { sessions, error }
+}
+
+function toRow(snap: QueryDocumentSnapshot<DocumentData>, myUid: string): ChatSessionRow {
+  const d = snap.data()
+  const p1 = d.Participant1 as string
+  const p2 = d.Participant2 as string
+  return {
+    id: snap.id,
+    otherParticipant: p1 === myUid ? p2 : p1,
+    name: (d.Name as string | undefined) ?? '',
+    createdAt: (d.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
+    updatedAt: (d.UpdatedAt as Timestamp | undefined)?.toDate() ?? null,
+  }
 }
 
 async function importRsaPublicKey(spkiBase64: string): Promise<CryptoKey> {
