@@ -174,14 +174,73 @@ async function send(): Promise<void> {
   }
 }
 
+// Bucketed vanish text — coarser as the remaining time grows so the label
+// barely changes for most of a message's life. Result: Vue's diff sees the
+// same string across most ticks and skips the DOM update, so the screen
+// stops feeling like it's constantly moving. The smooth-depleting horizontal
+// line below the bubble carries the per-second visual signal.
+//   <60s          → second precision  ("45s")
+//   60s – 5min    → minute precision  ("4m")
+//   5min – 15min  → 5-minute steps    ("10m")
+//   15min – 1hr   → 15-minute steps   ("45m")
+//   1hr+          → hour precision    ("2h")
 function vanishLabel(m: ChatMessageRow): string {
   const at = vanishAtMs(m)
   if (at === null) return 'unread'
   const remaining = Math.max(0, at - now.value)
-  const totalSeconds = Math.ceil(remaining / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `vanishes in ${minutes}m ${String(seconds).padStart(2, '0')}s`
+  if (remaining < 60_000) {
+    return `vanishes in ${Math.ceil(remaining / 1000)}s`
+  }
+  if (remaining < 5 * 60_000) {
+    return `vanishes in ${Math.floor(remaining / 60_000)}m`
+  }
+  if (remaining < 15 * 60_000) {
+    return `vanishes in ${Math.floor(remaining / 60_000 / 5) * 5}m`
+  }
+  if (remaining < 60 * 60_000) {
+    return `vanishes in ${Math.floor(remaining / 60_000 / 15) * 15}m`
+  }
+  return `vanishes in ${Math.floor(remaining / 3_600_000)}h`
+}
+
+// Horizontal vanish line — driven entirely by CSS keyframes so the browser
+// can run it on the compositor without JS ticks. We feed in two values that
+// don't change for the lifetime of the message:
+//   - animationDuration = the recipient's full vanish window (total lifetime)
+//   - animationDelay    = NEGATIVE elapsed since readAt, which jumps the
+//                         animation forward so a message read 10 min ago in
+//                         a 60-min window starts the line at the 10/60 point.
+// We memoise per (messageId, readAt) so the style object's identity is
+// stable across Vue re-renders — the inline style only "changes" the moment
+// readAt transitions null → set, and the keyframe runs uninterrupted from
+// that point. The cache is component-local so a remount (navigate away and
+// back) recomputes elapsed against the current Date.now(), avoiding stale
+// offsets.
+const progressStyleCache = new Map<
+  string,
+  { animationDuration: string; animationDelay: string }
+>()
+
+function progressStyle(m: ChatMessageRow): Record<string, string> {
+  if (!m.readAt) return { display: 'none' }
+  const minutes = m.fromMe ? otherMinutes.value : myMinutes.value
+  if (minutes === null) return { display: 'none' }
+  const key = `${m.id}:${m.readAt.getTime()}`
+  let style = progressStyleCache.get(key)
+  if (!style) {
+    const totalMs = minutes * 60_000
+    const elapsedMs = Math.max(0, Date.now() - m.readAt.getTime())
+    style = {
+      animationDuration: `${totalMs}ms`,
+      animationDelay: `-${elapsedMs}ms`,
+    }
+    progressStyleCache.set(key, style)
+  }
+  return style
+}
+
+function showProgress(m: ChatMessageRow): boolean {
+  return Boolean(m.readAt) && !isVanished(m, now.value)
 }
 
 function iReacted(m: ChatMessageRow, emoji: string): boolean {
@@ -292,6 +351,11 @@ async function onDelete(messageId: string): Promise<void> {
         >
           <span v-if="m.text !== null">{{ m.text }}</span>
           <span v-else class="decrypt-err">[unable to decrypt]</span>
+        </div>
+
+        <!-- Vanish progress line — CSS-animated, depletes smoothly without JS ticks -->
+        <div v-if="showProgress(m)" class="msg-progress">
+          <div class="msg-progress-fill" :style="progressStyle(m)" />
         </div>
 
         <!-- Meta row: time · vanish pill · delete -->
@@ -514,6 +578,34 @@ async function onDelete(messageId: string): Promise<void> {
 .msg-them { align-self: flex-start; align-items: flex-start; }
 
 .decrypt-err { color: var(--vw-danger); font-style: italic; }
+
+/* ── Vanish progress line ──
+   A 2px track with a mint fill that depletes via a single CSS keyframe.
+   The fill's animationDuration (= total lifetime) and animationDelay
+   (= NEGATIVE elapsed since readAt) come from progressStyle() inline, so
+   the browser drives the animation on the compositor without per-second JS
+   updates — see the long comment in the script section. The line spans the
+   whole message-row column (75% viewport max) rather than fitting the
+   bubble; it reads as a divider between bubble and meta as well as a
+   countdown indicator. */
+.msg-progress {
+  width: 100%;
+  height: 2px;
+  background: var(--vw-border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.msg-progress-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--vw-green-strong);
+  animation-name: msg-deplete;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes msg-deplete {
+  to { width: 0; }
+}
 
 /* ── Meta ── */
 .msg-meta {
