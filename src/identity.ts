@@ -31,6 +31,14 @@ export function useIdentity(): { identity: Ref<Identity | null>; error: Ref<unkn
   return { identity: identityRef, error: errorRef }
 }
 
+// Synchronous getter for non-component callers (e.g. sessions.ts). Throws if
+// called before identity has been established (shouldn't happen since the
+// rest of the app is gated behind `useIdentity()` resolving).
+export function getIdentity(): Identity {
+  if (!identityRef.value) throw new Error('Identity not yet initialized.')
+  return identityRef.value
+}
+
 function init(): Promise<Identity> {
   return new Promise((resolve, reject) => {
     onAuthStateChanged(auth, async (user) => {
