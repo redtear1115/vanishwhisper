@@ -1,0 +1,175 @@
+/* VanishWhisper design tokens
+   Generated from brand design — Whisp ghost cat mascot
+   Purple palette: #5B0888 / #713ABE / #9D76C1 / #E5CFF7
+   Mint green:     #A8D8A8 / #7BC47B
+*/
+
+:root {
+  /* ── Background layers ── */
+  --vw-bg:       #0D0A14;
+  --vw-surface:  #16101F;
+  --vw-surface2: #1E1530;
+  --vw-border:   #2D1F45;
+  --vw-border2:  #3D2A5F;
+
+  /* ── Purple palette ── */
+  --vw-purple-deep:  #5B0888;
+  --vw-purple-mid:   #713ABE;
+  --vw-purple-light: #9D76C1;
+  --vw-purple-pale:  #E5CFF7;
+
+  /* ── Mint green (secondary) ── */
+  --vw-green:       #A8D8A8;
+  --vw-green-strong: #7BC47B;
+  --vw-green-deep:  #1C3A20;
+  --vw-green-dim:   #1A2A1A;
+
+  /* ── Text ── */
+  --vw-text:  #EDE0FF;
+  --vw-text2: #A688C8;
+  --vw-text3: #6B4D8A;
+
+  /* ── Danger ── */
+  --vw-danger: #E85C7A;
+}
+
+/* ── Reset & base ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--vw-bg);
+  color: var(--vw-text);
+  font-family: system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--vw-purple-light);
+  text-decoration: none;
+}
+a:hover { color: var(--vw-purple-pale); }
+
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  color: var(--vw-purple-light);
+}
+
+/* ── Utility classes ── */
+.vw-card {
+  background: var(--vw-surface2);
+  border: 0.5px solid var(--vw-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.vw-badge-e2e {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: var(--vw-green-dim);
+  color: var(--vw-green-strong);
+  border: 0.5px solid #2D4A2D;
+}
+
+.vw-pill {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: #2A1A3A;
+  color: var(--vw-purple-light);
+  border: 0.5px solid var(--vw-border2);
+}
+
+.vw-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--vw-purple-deep);
+  border: none;
+  border-radius: 8px;
+  color: var(--vw-purple-pale);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.vw-btn-primary:hover { background: var(--vw-purple-mid); }
+
+.vw-btn-send {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--vw-purple-mid);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.vw-btn-send:hover { background: var(--vw-purple-deep); }
+
+.vw-input {
+  background: #1A1228;
+  border: 0.5px solid var(--vw-border2);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--vw-text);
+  font-size: 13px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.vw-input::placeholder { color: var(--vw-text3); }
+.vw-input:focus { border-color: var(--vw-purple-mid); }
+
+.vw-input-pill {
+  background: #1A1228;
+  border: 0.5px solid var(--vw-border2);
+  border-radius: 20px;
+  padding: 8px 14px;
+  color: var(--vw-text);
+  font-size: 13px;
+  flex: 1;
+  outline: none;
+}
+.vw-input-pill::placeholder { color: var(--vw-text3); }
+.vw-input-pill:focus { border-color: var(--vw-purple-mid); }
+
+.vw-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 0.5px solid var(--vw-border);
+  background: var(--vw-surface);
+}
+
+.vw-text-muted   { color: var(--vw-text2); }
+.vw-text-hint    { color: var(--vw-text3); }
+.vw-text-danger  { color: var(--vw-danger); }
+.vw-text-green   { color: var(--vw-green-strong); }
+
+/* ── Chat bubbles ── */
+.vw-bubble-me {
+  background: var(--vw-purple-deep);
+  color: var(--vw-purple-pale);
+  border-radius: 14px 14px 4px 14px;
+  padding: 9px 13px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vw-bubble-them {
+  background: var(--vw-surface2);
+  border: 0.5px solid var(--vw-border2);
+  color: var(--vw-text);
+  border-radius: 14px 14px 14px 4px;
+  padding: 9px 13px;
+  font-size: 13px;
+  line-height: 1.45;
+}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getIdentity } from '../identity'
+import { setLabel, useLabels } from '../labels'
 import {
   deleteMessage,
   markDeleted,
@@ -16,6 +17,7 @@ import { getDeletedInMinutes } from '../users'
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 
 const props = defineProps<{ id: string }>()
+const { labels } = useLabels()
 
 const opened = ref<OpenSession | null>(null)
 const messages = ref<ChatMessageRow[]>([])
@@ -23,20 +25,51 @@ const draft = ref('')
 const sending = ref(false)
 const error = ref<string | null>(null)
 const now = ref(Date.now())
-// Vanish duration is the *recipient's* DeletedInMinutes. We need both: messages
-// I sent vanish on the other party's setting; messages they sent vanish on mine.
 const myMinutes = ref<number | null>(null)
 const otherMinutes = ref<number | null>(null)
 
-// Idempotency guards — first snapshot for an unread inbound message fires
-// markRead, but subsequent snapshots (the modify echo, reconnect replays) must
-// not re-fire it. Same for markDeleted at expiry.
 const readFired = new Set<string>()
 const deletedFired = new Set<string>()
-
-// Per-message reaction picker state. Only one open at a time keeps the UI
-// uncluttered for a phase 2 first cut.
 const pickerOpenFor = ref<string | null>(null)
+
+// Inline rename panel for the session and other-party display labels.
+const renaming = ref(false)
+const draftSessionName = ref('')
+const draftOtherName = ref('')
+const savingLabels = ref(false)
+
+const sessionTitle = computed(() => {
+  const labelled = labels.value.get(props.id)?.sessionName
+  return labelled ?? `Session ${props.id.slice(0, 10)}…`
+})
+const otherDisplay = computed(() => {
+  if (!opened.value) return ''
+  const labelled = labels.value.get(props.id)?.otherName
+  return labelled ?? `${opened.value.otherParticipant.slice(0, 16)}…`
+})
+
+function openRenamePanel(): void {
+  const current = labels.value.get(props.id)
+  draftSessionName.value = current?.sessionName ?? ''
+  draftOtherName.value = current?.otherName ?? ''
+  renaming.value = true
+}
+
+async function saveLabels(): Promise<void> {
+  savingLabels.value = true
+  error.value = null
+  try {
+    await setLabel(props.id, {
+      sessionName: draftSessionName.value,
+      otherName: draftOtherName.value,
+    })
+    renaming.value = false
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    savingLabels.value = false
+  }
+}
 
 let unsub: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
@@ -79,12 +112,10 @@ onUnmounted(() => {
 
 function ackUnread(rows: ChatMessageRow[]): void {
   for (const m of rows) {
-    // Skip already-deleted messages (sender unsent before we got here, or
-    // recipient's previous tab already vanished) — no point acking a dead doc.
     if (m.fromMe || m.readAt || m.deletedAt || readFired.has(m.id)) continue
     readFired.add(m.id)
     markRead(m.id).catch((err) => {
-      readFired.delete(m.id) // allow retry on the next snapshot
+      readFired.delete(m.id)
       console.error('markRead failed', err)
     })
   }
@@ -108,9 +139,6 @@ const visibleMessages = computed(() =>
 )
 
 function tickVanish(): void {
-  // Recipient writes DeletedAt — sender's client just hides locally. If a
-  // recipient closes their tab before expiry, the doc lingers until they're
-  // back online; both sides have already hidden it from their own UI.
   for (const m of messages.value) {
     if (m.fromMe || m.deletedAt || deletedFired.has(m.id)) continue
     const at = vanishAtMs(m)
@@ -175,55 +203,397 @@ async function onDelete(messageId: string): Promise<void> {
 </script>
 
 <template>
-  <section>
-    <p><router-link to="/">← Sessions</router-link></p>
-    <h2>Chat</h2>
-    <p v-if="error" style="color: crimson">{{ error }}</p>
-    <template v-if="opened">
-      <p style="color: gray">
-        With <code>{{ opened.otherParticipant }}</code>
+  <div class="chat-wrap">
+    <!-- Header -->
+    <header class="chat-header">
+      <router-link to="/" class="back-btn">←</router-link>
+      <button
+        type="button"
+        class="chat-header-info"
+        :title="renaming ? 'Close rename' : 'Rename session / other party'"
+        @click="renaming ? (renaming = false) : openRenamePanel()"
+      >
+        <span class="chat-title">{{ sessionTitle }}</span>
+        <span v-if="opened" class="chat-subtitle">with {{ otherDisplay }}</span>
+      </button>
+      <span class="vw-badge-e2e">E2E</span>
+    </header>
+
+    <!-- Rename panel -->
+    <div v-if="renaming" class="rename-panel">
+      <label class="rename-field">
+        <span class="rename-label">Session name</span>
+        <input
+          v-model="draftSessionName"
+          class="vw-input"
+          :disabled="savingLabels"
+          placeholder="e.g. Project chat"
+          maxlength="64"
+        />
+      </label>
+      <label class="rename-field">
+        <span class="rename-label">Other party</span>
+        <input
+          v-model="draftOtherName"
+          class="vw-input"
+          :disabled="savingLabels"
+          placeholder="e.g. Alice"
+          maxlength="64"
+        />
+      </label>
+      <p class="rename-hint">Stored locally only — never uploaded.</p>
+      <div class="rename-actions">
+        <button
+          type="button"
+          class="vw-btn-primary"
+          :disabled="savingLabels"
+          @click="saveLabels"
+        >{{ savingLabels ? 'Saving…' : 'Save' }}</button>
+        <button
+          type="button"
+          class="rename-cancel"
+          :disabled="savingLabels"
+          @click="renaming = false"
+        >Cancel</button>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div v-if="error" class="error-banner">{{ error }}</div>
+
+    <!-- Loading -->
+    <div v-if="!opened && !error" class="chat-loading">
+      <p style="font-size:13px;color:var(--vw-text3);">Opening session…</p>
+    </div>
+
+    <!-- Messages -->
+    <div v-else-if="opened" class="chat-messages">
+      <p v-if="visibleMessages.length === 0" class="chat-empty">
+        No messages yet — say hi.
       </p>
-      <ul>
-        <li v-for="m in visibleMessages" :key="m.id">
-          <strong>{{ m.fromMe ? 'me' : 'them' }}:</strong>
+      <div
+        v-for="m in visibleMessages"
+        :key="m.id"
+        class="msg-row"
+        :class="m.fromMe ? 'msg-me' : 'msg-them'"
+      >
+        <!-- Bubble -->
+        <div
+          class="msg-bubble"
+          :class="m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them'"
+        >
           <span v-if="m.text !== null">{{ m.text }}</span>
-          <span v-else style="color: crimson">[unable to decrypt]</span>
-          <span style="color: gray; font-size: 0.85em">
-            · {{ m.createdAt?.toLocaleTimeString() ?? '…' }}
-            · {{ vanishLabel(m) }}
-          </span>
-          <button v-if="m.fromMe" type="button" @click="onDelete(m.id)" style="margin-left: 0.5em">
-            delete
+          <span v-else class="decrypt-err">[unable to decrypt]</span>
+        </div>
+
+        <!-- Meta row: time · vanish pill · delete -->
+        <div class="msg-meta">
+          <span class="msg-time">{{ m.createdAt?.toLocaleTimeString() ?? '…' }}</span>
+          <span class="vw-pill">{{ vanishLabel(m) }}</span>
+          <button
+            v-if="m.fromMe"
+            class="delete-btn"
+            type="button"
+            title="Unsend"
+            @click="onDelete(m.id)"
+          >unsend</button>
+        </div>
+
+        <!-- Reactions row -->
+        <div class="reactions-row">
+          <button
+            v-for="emoji in REACTION_EMOJIS"
+            v-show="reactionCount(m, emoji) > 0 || pickerOpenFor === m.id"
+            :key="emoji"
+            type="button"
+            class="reaction-pill"
+            :class="{ mine: iReacted(m, emoji) }"
+            @click="onReact(m.id, emoji, iReacted(m, emoji))"
+          >
+            {{ emoji }}<span v-if="reactionCount(m, emoji) > 0" class="reaction-count"> {{ reactionCount(m, emoji) }}</span>
           </button>
-          <div style="margin-top: 0.25em">
-            <button
-              v-for="emoji in REACTION_EMOJIS"
-              v-show="reactionCount(m, emoji) > 0 || pickerOpenFor === m.id"
-              :key="emoji"
-              type="button"
-              :style="{ fontWeight: iReacted(m, emoji) ? 'bold' : 'normal', marginRight: '0.25em' }"
-              @click="onReact(m.id, emoji, iReacted(m, emoji))"
-            >
-              {{ emoji }}<span v-if="reactionCount(m, emoji) > 0"> {{ reactionCount(m, emoji) }}</span>
-            </button>
-            <button
-              v-if="pickerOpenFor !== m.id"
-              type="button"
-              @click="pickerOpenFor = m.id"
-            >
-              + react
-            </button>
-            <button v-else type="button" @click="pickerOpenFor = null">close</button>
-          </div>
-        </li>
-      </ul>
-      <form @submit.prevent="send">
-        <input v-model="draft" :disabled="sending" placeholder="Type a message…" required />
-        <button type="submit" :disabled="sending || !draft">
-          {{ sending ? '…' : 'Send' }}
-        </button>
-      </form>
-    </template>
-    <p v-else-if="!error">Opening session…</p>
-  </section>
+
+          <button
+            v-if="pickerOpenFor !== m.id"
+            type="button"
+            class="react-open-btn"
+            @click="pickerOpenFor = m.id"
+          >+ react</button>
+          <button
+            v-else
+            type="button"
+            class="react-open-btn"
+            @click="pickerOpenFor = null"
+          >close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <form v-if="opened" class="input-bar" @submit.prevent="send">
+      <input
+        v-model="draft"
+        class="vw-input-pill"
+        :disabled="sending"
+        placeholder="Type a message…"
+        required
+      />
+      <button type="submit" class="vw-btn-send" :disabled="sending || !draft">
+        <span class="send-icon" />
+      </button>
+    </form>
+  </div>
 </template>
+
+<style scoped>
+.chat-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--vw-bg);
+}
+
+/* ── Header ── */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--vw-surface);
+  border-bottom: 0.5px solid var(--vw-border);
+  flex-shrink: 0;
+}
+
+.back-btn {
+  font-size: 16px;
+  color: var(--vw-purple-light);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.back-btn:hover { color: var(--vw-purple-pale); }
+
+/* The header info area is now a <button> so it can open the rename panel —
+   reset native button chrome and keep the same column layout. */
+.chat-header-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.chat-header-info:hover .chat-title { color: var(--vw-purple-pale); }
+
+.chat-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vw-text);
+  transition: color 0.15s;
+}
+
+.chat-subtitle {
+  font-size: 11px;
+  color: var(--vw-text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Rename panel ── */
+.rename-panel {
+  padding: 14px 16px;
+  background: var(--vw-surface2);
+  border-bottom: 0.5px solid var(--vw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.rename-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rename-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vw-text3);
+}
+
+.rename-hint {
+  font-size: 11px;
+  color: var(--vw-text3);
+  margin: 0;
+}
+
+.rename-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rename-cancel {
+  background: none;
+  border: 0.5px solid var(--vw-border2);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--vw-text2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.rename-cancel:hover { color: var(--vw-purple-pale); border-color: var(--vw-purple-mid); }
+.rename-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Chat empty state ── */
+.chat-empty {
+  margin: auto;
+  font-size: 13px;
+  color: var(--vw-text3);
+  text-align: center;
+}
+
+/* ── Error banner ── */
+.error-banner {
+  padding: 8px 16px;
+  background: rgba(232, 92, 122, 0.12);
+  border-bottom: 0.5px solid rgba(232, 92, 122, 0.3);
+  font-size: 12px;
+  color: var(--vw-danger);
+  flex-shrink: 0;
+}
+
+/* ── Loading ── */
+.chat-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Messages ── */
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-messages::-webkit-scrollbar { width: 4px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: var(--vw-border2); border-radius: 2px; }
+
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+  gap: 4px;
+}
+.msg-me   { align-self: flex-end; align-items: flex-end; }
+.msg-them { align-self: flex-start; align-items: flex-start; }
+
+.decrypt-err { color: var(--vw-danger); font-style: italic; }
+
+/* ── Meta ── */
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.msg-time {
+  font-size: 10px;
+  color: var(--vw-text3);
+}
+
+.delete-btn {
+  font-size: 10px;
+  color: var(--vw-text3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+.delete-btn:hover { color: var(--vw-danger); }
+
+/* ── Reactions ── */
+.reactions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 99px;
+  border: 0.5px solid var(--vw-border2);
+  background: var(--vw-surface2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  color: var(--vw-text);
+}
+.reaction-pill:hover { border-color: var(--vw-purple-light); }
+.reaction-pill.mine {
+  border-color: var(--vw-purple-mid);
+  background: rgba(113, 58, 190, 0.2);
+}
+
+.reaction-count {
+  font-size: 11px;
+  color: var(--vw-text2);
+  margin-left: 2px;
+}
+
+.react-open-btn {
+  font-size: 10px;
+  color: var(--vw-text3);
+  background: none;
+  border: 0.5px solid var(--vw-border);
+  border-radius: 99px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.react-open-btn:hover {
+  color: var(--vw-purple-light);
+  border-color: var(--vw-border2);
+}
+
+/* ── Input bar ── */
+.input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 0.5px solid var(--vw-border);
+  background: var(--vw-surface);
+  flex-shrink: 0;
+}
+
+.send-icon {
+  display: block;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 9px solid var(--vw-purple-pale);
+  margin-left: 2px;
+}
+
+.vw-btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
