@@ -1,12 +1,17 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
+  deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
+  updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot,
   type QuerySnapshot,
@@ -92,6 +97,90 @@ export interface ChatSessionRow {
   name: string
   createdAt: Date | null
   updatedAt: Date | null
+  // UID of the participant who has requested mutual deletion of this session
+  // (or null when no request is pending). Drives the home-list "delete pending"
+  // hint and, in the chat view, the agree/reject banner.
+  deleteRequestedBy: string | null
+}
+
+export interface SessionMeta {
+  deleteRequestedBy: string | null
+  deleteRequestedAt: Date | null
+}
+
+// Live subscription to a single ChatSessions doc — lets the chat view react
+// to remote DeleteRequestedBy changes (banner toggles between "I requested",
+// "they requested", and absent) and to the session itself being deleted
+// (other party agreed → cascade ran → doc gone → onChange fires with null
+// so we can navigate the user back to the home list).
+export function subscribeSession(
+  sessionId: string,
+  onChange: (meta: SessionMeta | null) => void,
+  onError?: (err: unknown) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, 'ChatSessions', sessionId),
+    (snap) => {
+      if (!snap.exists()) {
+        onChange(null)
+        return
+      }
+      const d = snap.data()
+      onChange({
+        deleteRequestedBy: (d.DeleteRequestedBy as string | undefined) ?? null,
+        deleteRequestedAt: (d.DeleteRequestedAt as Timestamp | undefined)?.toDate() ?? null,
+      })
+    },
+    onError,
+  )
+}
+
+// Mutual-delete lifecycle. Three operations that both sides can issue from
+// the chat view:
+//   - requestDeleteSession: writes DeleteRequestedBy = me. Rules enforce no
+//     pending request can already exist.
+//   - cancelDeleteSession: clears the request fields. Either party can fire
+//     this — requester changing their mind = cancel; other party = reject.
+//   - agreeDeleteSession: cascade hard-deletes all messages + the session
+//     doc. Rules enforce that ONLY the non-requester can do this, so the
+//     requester literally cannot delete on their own.
+
+export async function requestDeleteSession(sessionId: string): Promise<void> {
+  const me = getIdentity()
+  await updateDoc(doc(db, 'ChatSessions', sessionId), {
+    DeleteRequestedBy: me.uid,
+    DeleteRequestedAt: serverTimestamp(),
+    UpdatedAt: serverTimestamp(),
+  })
+}
+
+export async function cancelDeleteSession(sessionId: string): Promise<void> {
+  await updateDoc(doc(db, 'ChatSessions', sessionId), {
+    DeleteRequestedBy: deleteField(),
+    DeleteRequestedAt: deleteField(),
+    UpdatedAt: serverTimestamp(),
+  })
+}
+
+// Cascade hard-delete. Walks every ChatMessages doc for the session and
+// batches the deletes (Firestore caps batches at 500 ops; we chunk at 499
+// so the final batch can also delete the session doc). Two-phase isn't
+// needed — within a batch, rules evaluate against the pre-batch state, so
+// the message rule's get(session) still sees DeleteRequestedBy set.
+export async function agreeDeleteSession(sessionId: string): Promise<void> {
+  const messagesSnap = await getDocs(
+    query(collection(db, 'ChatMessages'), where('SessionID', '==', sessionId)),
+  )
+  const messageDocs = messagesSnap.docs
+  const CHUNK = 499
+  for (let i = 0; i < messageDocs.length; i += CHUNK) {
+    const batch = writeBatch(db)
+    for (const m of messageDocs.slice(i, i + CHUNK)) {
+      batch.delete(m.ref)
+    }
+    await batch.commit()
+  }
+  await deleteDoc(doc(db, 'ChatSessions', sessionId))
 }
 
 export function useSessions(): { sessions: Ref<ChatSessionRow[]>; error: Ref<unknown> } {
@@ -152,6 +241,7 @@ function toRow(snap: QueryDocumentSnapshot<DocumentData>, myUid: string): ChatSe
     name: (d.Name as string | undefined) ?? '',
     createdAt: (d.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
     updatedAt: (d.UpdatedAt as Timestamp | undefined)?.toDate() ?? null,
+    deleteRequestedBy: (d.DeleteRequestedBy as string | undefined) ?? null,
   }
 }
 

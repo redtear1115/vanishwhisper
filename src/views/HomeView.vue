@@ -104,7 +104,16 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
             <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
             <span class="session-meta">{{ display(s.id, s.otherParticipant).secondary }}</span>
           </div>
-          <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
+          <div class="session-trailing">
+            <span
+              v-if="s.deleteRequestedBy"
+              class="delete-pending-pill"
+              :title="s.deleteRequestedBy === identity?.uid
+                ? 'Waiting for the other party to agree to delete'
+                : 'The other party wants to delete — open to respond'"
+            >{{ s.deleteRequestedBy === identity?.uid ? 'pending…' : 'delete?' }}</span>
+            <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
+          </div>
         </router-link>
       </div>
     </div>
@@ -267,9 +276,35 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   color: var(--vw-text3);
 }
 
+.session-trailing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .session-time {
   font-size: 11px;
   color: var(--vw-text3);
   flex-shrink: 0;
+}
+
+/* "delete pending" pill — colours the row's trailing edge so the user
+   notices a session that needs attention without opening it. Two flavours:
+   "pending…" (I requested) is muted purple; "delete?" (they requested,
+   action needed) is danger-tinted. */
+.delete-pending-pill {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--vw-surface2);
+  color: var(--vw-text2);
+  border: 0.5px solid var(--vw-border2);
+}
+.delete-pending-pill:not([title*="Waiting"]) {
+  background: rgba(232, 92, 122, 0.15);
+  color: var(--vw-danger);
+  border-color: rgba(232, 92, 122, 0.4);
 }
 </style>

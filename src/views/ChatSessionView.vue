@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { getIdentity } from '../identity'
 import { sessionDisplay, setLabel, useLabels } from '../labels'
 import {
@@ -12,13 +13,22 @@ import {
   toggleReaction,
   type ChatMessageRow,
 } from '../messages'
-import { openSession, type OpenSession } from '../sessions'
+import {
+  agreeDeleteSession,
+  cancelDeleteSession,
+  openSession,
+  requestDeleteSession,
+  subscribeSession,
+  type OpenSession,
+  type SessionMeta,
+} from '../sessions'
 import { subscribeDeletedInMinutes } from '../users'
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 
 const props = defineProps<{ id: string }>()
 const { labels } = useLabels()
+const router = useRouter()
 
 const opened = ref<OpenSession | null>(null)
 const messages = ref<ChatMessageRow[]>([])
@@ -33,6 +43,18 @@ const error = ref<string | null>(null)
 // stays valid until subscribeMessages revokes it on next snapshot, which
 // gives the user a moment to dismiss before it goes blank.
 const lightboxUrl = ref<string | null>(null)
+
+// Session-level metadata (live). Drives the mutual-delete banner and the
+// auto-redirect-to-home when the OTHER party agrees and cascade-deletes
+// the session out from under us.
+const sessionMeta = ref<SessionMeta | null>(null)
+const deleting = ref(false) // true during cascade delete
+type DeleteRequestState = 'none' | 'mine' | 'theirs'
+const deleteRequestState = computed<DeleteRequestState>(() => {
+  const requestedBy = sessionMeta.value?.deleteRequestedBy
+  if (!requestedBy) return 'none'
+  return requestedBy === opened.value?.myUid ? 'mine' : 'theirs'
+})
 const now = ref(Date.now())
 const myMinutes = ref<number | null>(null)
 const otherMinutes = ref<number | null>(null)
@@ -116,6 +138,7 @@ async function saveLabels(): Promise<void> {
 let unsub: (() => void) | null = null
 let unsubMyMinutes: (() => void) | null = null
 let unsubOtherMinutes: (() => void) | null = null
+let unsubSession: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
@@ -135,6 +158,22 @@ onMounted(async () => {
     unsubOtherMinutes = subscribeDeletedInMinutes(
       session.otherParticipant,
       (m) => { otherMinutes.value = m },
+      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+    )
+    // Live session metadata (DeleteRequestedBy). When the doc disappears —
+    // the OTHER party agreed and cascade-deleted — go back to the home
+    // list so the user isn't staring at a chat that no longer exists.
+    unsubSession = subscribeSession(
+      props.id,
+      (meta) => {
+        if (meta === null) {
+          // Suppress the navigate when WE are the ones cascade-deleting; the
+          // agreeDeleteSession() handler routes home itself once it finishes.
+          if (!deleting.value) router.replace('/')
+          return
+        }
+        sessionMeta.value = meta
+      },
       (err) => { error.value = err instanceof Error ? err.message : String(err) },
     )
     unsub = subscribeMessages(
@@ -166,6 +205,7 @@ onUnmounted(() => {
   unsub?.()
   unsubMyMinutes?.()
   unsubOtherMinutes?.()
+  unsubSession?.()
   if (timer !== null) clearInterval(timer)
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onDocumentKeydown)
@@ -425,6 +465,40 @@ async function onDelete(messageId: string): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
+
+async function onRequestDelete(): Promise<void> {
+  error.value = null
+  try {
+    await requestDeleteSession(props.id)
+    renaming.value = false // close the rename panel; banner takes over
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function onCancelOrReject(): Promise<void> {
+  error.value = null
+  try {
+    await cancelDeleteSession(props.id)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function onAgreeDelete(): Promise<void> {
+  error.value = null
+  deleting.value = true
+  try {
+    await agreeDeleteSession(props.id)
+    // Cascade succeeded — get out before our own session subscription fires
+    // null and races with the navigation. The deleting flag in the snapshot
+    // handler guards the same path.
+    router.replace('/')
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    deleting.value = false
+  }
+}
 </script>
 
 <template>
@@ -480,6 +554,43 @@ async function onDelete(messageId: string): Promise<void> {
           :disabled="savingLabels"
           @click="renaming = false"
         >Cancel</button>
+      </div>
+
+      <!-- Danger zone: request mutual delete. Hidden once a request is
+           pending — at that point the banner above the messages takes over
+           the workflow. -->
+      <div v-if="deleteRequestState === 'none'" class="rename-danger">
+        <p class="rename-danger-label">Danger zone</p>
+        <button
+          type="button"
+          class="rename-danger-btn"
+          :disabled="savingLabels"
+          @click="onRequestDelete"
+        >Request delete this session</button>
+        <p class="rename-hint">Both parties must agree before the session and all messages are deleted for both sides.</p>
+      </div>
+    </div>
+
+    <!-- Mutual-delete banner. Two flavours depending on who requested. -->
+    <div v-if="deleteRequestState === 'mine'" class="delete-banner mine">
+      <span>Waiting for the other party to agree to delete this session…</span>
+      <button type="button" class="delete-banner-btn" @click="onCancelOrReject">Cancel request</button>
+    </div>
+    <div v-else-if="deleteRequestState === 'theirs'" class="delete-banner theirs">
+      <span>The other party wants to delete this session and all messages.</span>
+      <div class="delete-banner-actions">
+        <button
+          type="button"
+          class="delete-banner-btn danger"
+          :disabled="deleting"
+          @click="onAgreeDelete"
+        >{{ deleting ? 'Deleting…' : 'Agree & delete' }}</button>
+        <button
+          type="button"
+          class="delete-banner-btn"
+          :disabled="deleting"
+          @click="onCancelOrReject"
+        >Reject</button>
       </div>
     </div>
 
@@ -735,6 +846,85 @@ async function onDelete(messageId: string): Promise<void> {
 }
 .rename-cancel:hover { color: var(--vw-purple-pale); border-color: var(--vw-purple-mid); }
 .rename-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Danger zone — visually separated by a top border + a danger-tinted
+   button so the destructive option doesn't sit flush with safe edits. */
+.rename-danger {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--vw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rename-danger-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vw-danger);
+  margin: 0;
+}
+.rename-danger-btn {
+  align-self: flex-start;
+  background: none;
+  border: 0.5px solid rgba(232, 92, 122, 0.4);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--vw-danger);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rename-danger-btn:hover:not(:disabled) {
+  background: rgba(232, 92, 122, 0.1);
+  border-color: var(--vw-danger);
+}
+.rename-danger-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Mutual-delete banner ── */
+.delete-banner {
+  padding: 12px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  border-bottom: 0.5px solid var(--vw-border);
+}
+.delete-banner.mine {
+  background: rgba(157, 118, 193, 0.12);
+  color: var(--vw-purple-pale);
+}
+.delete-banner.theirs {
+  background: rgba(232, 92, 122, 0.12);
+  color: var(--vw-danger);
+}
+.delete-banner span { flex: 1; min-width: 200px; }
+.delete-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+.delete-banner-btn {
+  background: none;
+  border: 0.5px solid currentColor;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.delete-banner-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+.delete-banner-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.delete-banner-btn.danger {
+  background: var(--vw-danger);
+  border-color: var(--vw-danger);
+  color: white;
+}
+.delete-banner-btn.danger:hover:not(:disabled) {
+  background: rgba(232, 92, 122, 0.85);
+}
 
 /* ── Chat empty state ── */
 .chat-empty {

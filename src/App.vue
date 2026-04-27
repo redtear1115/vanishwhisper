@@ -25,8 +25,18 @@ const { identity, error } = useIdentity()
 <style scoped>
 .app-shell {
   min-height: 100vh;
+  /* Cap the column on desktop — full-width chat past ~720px reads as a
+     wall of text. On phones this collapses naturally to the viewport
+     width since max-width takes the smaller value. */
+  max-width: 720px;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
+  /* Distinguish the centered column slightly from the body background so
+     the boundary reads as "this is the app". On mobile the side gutters
+     are zero so this is invisible there. */
+  background: var(--vw-bg);
+  box-shadow: 0 0 0 0.5px var(--vw-border);
 }
 
 .app-state {

@@ -9,6 +9,18 @@ service cloud.firestore {
              || session.Participant2 == request.auth.uid;
     }
 
+    // Helper used by ChatMessages cascade delete: only the AGREER (the
+    // participant who isn't the one who requested deletion) can hard-delete
+    // messages, and only while a delete request is pending. This keeps a
+    // malicious client from going around the UI to nuke history without
+    // the other party's consent.
+    function isDeleteAgreerFor(sessionID) {
+      let s = get(/databases/$(database)/documents/ChatSessions/$(sessionID)).data;
+      return (s.Participant1 == request.auth.uid || s.Participant2 == request.auth.uid)
+             && 'DeleteRequestedBy' in s
+             && s.DeleteRequestedBy != request.auth.uid;
+    }
+
     // Phase 1 — Users: each user owns and writes their own doc; any
     // authenticated user can `get` a single Users doc (to fetch another
     // user's public key during invitation). `list` is intentionally not
@@ -18,13 +30,22 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Phase 1 — ChatSessions: creator must be Participant1 and the invitee
+    // ChatSessions: creator must be Participant1 and the invitee
     // (Participant2) must be a different existing user. Either participant
     // can `read` (covers `get` for opening + `list` for the home page —
     // clients must filter by Participant1 == uid or Participant2 == uid).
-    // Either participant can `update`, but only the `UpdatedAt` field —
-    // used to bump on each new message so the session list re-sorts by
-    // most-recent-activity.
+    // Update covers three shapes:
+    //   (a) Phase 1 — bump UpdatedAt only (per-message session re-sort)
+    //   (b) Phase 2.8 — request mutual delete: set DeleteRequestedBy +
+    //       DeleteRequestedAt to the requester's uid + request.time.
+    //       Only allowed when no request is currently pending.
+    //   (c) Phase 2.8 — cancel/reject delete: clear DeleteRequestedBy +
+    //       DeleteRequestedAt. Either party can fire this — requester
+    //       changing their mind = cancel, other party = reject.
+    // Delete: requires a pending request AND the deleter is NOT the
+    // requester. This is the rule-level enforcement of mutual consent —
+    // the requester can never delete on their own; only the other party
+    // (by definition consenting at delete time) can carry it out.
     match /ChatSessions/{sessionId} {
       allow read: if request.auth != null
                   && (resource.data.Participant1 == request.auth.uid
@@ -36,7 +57,31 @@ service cloud.firestore {
       allow update: if request.auth != null
                     && (resource.data.Participant1 == request.auth.uid
                         || resource.data.Participant2 == request.auth.uid)
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt']);
+                    && (
+                      // (a) bump UpdatedAt on new message
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt'])
+                      ||
+                      // (b) request mutual delete
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeleteRequestedBy', 'DeleteRequestedAt', 'UpdatedAt'])
+                        && !('DeleteRequestedBy' in resource.data)
+                        && request.resource.data.DeleteRequestedBy == request.auth.uid
+                        && request.resource.data.DeleteRequestedAt == request.time
+                      )
+                      ||
+                      // (c) cancel/reject delete
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeleteRequestedBy', 'DeleteRequestedAt', 'UpdatedAt'])
+                        && 'DeleteRequestedBy' in resource.data
+                        && !('DeleteRequestedBy' in request.resource.data)
+                        && !('DeleteRequestedAt' in request.resource.data)
+                      )
+                    );
+      allow delete: if request.auth != null
+                    && (resource.data.Participant1 == request.auth.uid
+                        || resource.data.Participant2 == request.auth.uid)
+                    && 'DeleteRequestedBy' in resource.data
+                    && resource.data.DeleteRequestedBy != request.auth.uid;
     }
 
     // ChatMessages: only session participants can read (per-doc rule applies
@@ -88,6 +133,11 @@ service cloud.firestore {
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Reactions'])
                       )
                     );
+      // Hard delete only by the AGREER during a pending session deletion
+      // request. Cascade-deletes the chat history when the other party
+      // confirms tearing down the session.
+      allow delete: if request.auth != null
+                    && isDeleteAgreerFor(resource.data.SessionID);
     }
   }
 }
