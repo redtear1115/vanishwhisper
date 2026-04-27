@@ -5,6 +5,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  updateDoc,
   where,
   writeBatch,
   type DocumentData,
@@ -17,9 +18,12 @@ import { getIdentity } from './identity'
 
 export interface ChatMessageRow {
   id: string
+  senderUid: string
   fromMe: boolean
   text: string | null // null when decryption fails
   createdAt: Date | null
+  readAt: Date | null
+  deletedAt: Date | null
 }
 
 export async function sendMessage(
@@ -75,11 +79,15 @@ export function subscribeMessages(
             return
           }
           const data = change.doc.data()
+          const senderUid = data.UserID as string
           map.set(change.doc.id, {
             id: change.doc.id,
-            fromMe: data.UserID === me.uid,
+            senderUid,
+            fromMe: senderUid === me.uid,
             text: await tryDecrypt(sessionKey, data.Context as string),
             createdAt: (data.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
+            readAt: (data.ReadAt as Timestamp | undefined)?.toDate() ?? null,
+            deletedAt: (data.DeletedAt as Timestamp | undefined)?.toDate() ?? null,
           })
         }),
       )
@@ -91,6 +99,21 @@ export function subscribeMessages(
     },
     onError,
   )
+}
+
+// Vanish lifecycle. Only the recipient is permitted to write these fields
+// (Firestore rules enforce: sender !== writer, single-field write, value ===
+// request.time). The countdown duration is computed by both clients locally
+// from the recipient's DeletedInMinutes; the recipient is also responsible for
+// writing DeletedAt when the timer elapses, so a tampering sender cannot
+// vanish their own message early.
+
+export async function markRead(messageId: string): Promise<void> {
+  await updateDoc(doc(db, 'ChatMessages', messageId), { ReadAt: serverTimestamp() })
+}
+
+export async function markDeleted(messageId: string): Promise<void> {
+  await updateDoc(doc(db, 'ChatMessages', messageId), { DeletedAt: serverTimestamp() })
 }
 
 async function tryDecrypt(sessionKey: CryptoKey, contextBase64: string): Promise<string | null> {

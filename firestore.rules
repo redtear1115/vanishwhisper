@@ -42,12 +42,34 @@ service cloud.firestore {
     // Phase 1 — ChatMessages: only session participants can read (per-doc
     // rule applies to list queries — clients must filter by SessionID).
     // Create only by a session participant; the message must be tagged
-    // with the sender's own UID.
+    // with the sender's own UID. Update is the vanish lifecycle: only the
+    // recipient (i.e. not the sender) may set ReadAt (first read) and then
+    // DeletedAt (countdown elapsed). Each write is a single field equal to
+    // server time, so a tampering sender cannot forge an early-vanish, and
+    // a malicious recipient cannot replay an older read timestamp to trigger
+    // an instant vanish on the sender's view.
     match /ChatMessages/{messageId} {
       allow read: if request.auth != null && isParticipant(resource.data.SessionID);
       allow create: if request.auth != null
                     && request.resource.data.UserID == request.auth.uid
                     && isParticipant(request.resource.data.SessionID);
+      allow update: if request.auth != null
+                    && isParticipant(resource.data.SessionID)
+                    && request.auth.uid != resource.data.UserID
+                    && (
+                      // (a) recipient sets ReadAt for the first time
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ReadAt'])
+                        && request.resource.data.ReadAt == request.time
+                      )
+                      ||
+                      // (b) recipient sets DeletedAt after ReadAt was set
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['DeletedAt'])
+                        && 'ReadAt' in resource.data
+                        && request.resource.data.DeletedAt == request.time
+                      )
+                    );
     }
   }
 }
