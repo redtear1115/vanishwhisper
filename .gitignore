@@ -64,3 +64,12 @@ node_modules/
 
 # dotenv environment variables file
 .env
+
+# Vite build output
+dist/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Claude Code local context (kept out of the repo)
+CLAUDE.md
