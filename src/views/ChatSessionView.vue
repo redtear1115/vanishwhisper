@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getIdentity } from '../identity'
-import { setLabel, useLabels } from '../labels'
+import { sessionDisplay, setLabel, useLabels } from '../labels'
 import {
   deleteMessage,
   markDeleted,
@@ -38,14 +38,22 @@ const draftSessionName = ref('')
 const draftOtherName = ref('')
 const savingLabels = ref(false)
 
-const sessionTitle = computed(() => {
-  const labelled = labels.value.get(props.id)?.sessionName
-  return labelled ?? `Session ${props.id.slice(0, 10)}…`
-})
-const otherDisplay = computed(() => {
-  if (!opened.value) return ''
-  const labelled = labels.value.get(props.id)?.otherName
-  return labelled ?? `${opened.value.otherParticipant.slice(0, 16)}…`
+// Two-line header derived from sessionDisplay() — friendly name promotes
+// to the title; the underlying session id (when a name is set) plus the
+// "with X" segment (with otherUid suffix when otherName is set) drop to
+// the subtitle so the IDs always remain visible (per user request).
+const headerDisplay = computed(() => {
+  if (!opened.value) {
+    const lbl = labels.value.get(props.id)
+    return {
+      primary: lbl?.sessionName ?? `${props.id.slice(0, 10)}…`,
+      secondary: '',
+    }
+  }
+  return sessionDisplay(labels.value, props.id, opened.value.otherParticipant, {
+    sessionShortLen: 10,
+    otherShortLen: 16,
+  })
 })
 
 function openRenamePanel(): void {
@@ -213,8 +221,8 @@ async function onDelete(messageId: string): Promise<void> {
         :title="renaming ? 'Close rename' : 'Rename session / other party'"
         @click="renaming ? (renaming = false) : openRenamePanel()"
       >
-        <span class="chat-title">{{ sessionTitle }}</span>
-        <span v-if="opened" class="chat-subtitle">with {{ otherDisplay }}</span>
+        <span class="chat-title">{{ headerDisplay.primary }}</span>
+        <span v-if="headerDisplay.secondary" class="chat-subtitle">{{ headerDisplay.secondary }}</span>
       </button>
       <span class="vw-badge-e2e">E2E</span>
     </header>
@@ -289,7 +297,7 @@ async function onDelete(messageId: string): Promise<void> {
         <!-- Meta row: time · vanish pill · delete -->
         <div class="msg-meta">
           <span class="msg-time">{{ m.createdAt?.toLocaleTimeString() ?? '…' }}</span>
-          <span class="vw-pill">{{ vanishLabel(m) }}</span>
+          <span class="vw-pill" :class="{ 'vw-pill--live': m.readAt }">{{ vanishLabel(m) }}</span>
           <button
             v-if="m.fromMe"
             class="delete-btn"
@@ -299,11 +307,12 @@ async function onDelete(messageId: string): Promise<void> {
           >unsend</button>
         </div>
 
-        <!-- Reactions row -->
+        <!-- Reactions row — picker only on inbound messages. Existing pills on
+             my own messages stay clickable so I can undo any pre-existing toggle. -->
         <div class="reactions-row">
           <button
             v-for="emoji in REACTION_EMOJIS"
-            v-show="reactionCount(m, emoji) > 0 || pickerOpenFor === m.id"
+            v-show="reactionCount(m, emoji) > 0 || (!m.fromMe && pickerOpenFor === m.id)"
             :key="emoji"
             type="button"
             class="reaction-pill"
@@ -313,18 +322,20 @@ async function onDelete(messageId: string): Promise<void> {
             {{ emoji }}<span v-if="reactionCount(m, emoji) > 0" class="reaction-count"> {{ reactionCount(m, emoji) }}</span>
           </button>
 
-          <button
-            v-if="pickerOpenFor !== m.id"
-            type="button"
-            class="react-open-btn"
-            @click="pickerOpenFor = m.id"
-          >+ react</button>
-          <button
-            v-else
-            type="button"
-            class="react-open-btn"
-            @click="pickerOpenFor = null"
-          >close</button>
+          <template v-if="!m.fromMe">
+            <button
+              v-if="pickerOpenFor !== m.id"
+              type="button"
+              class="react-open-btn"
+              @click="pickerOpenFor = m.id"
+            >+ react</button>
+            <button
+              v-else
+              type="button"
+              class="react-open-btn"
+              @click="pickerOpenFor = null"
+            >close</button>
+          </template>
         </div>
       </div>
     </div>
@@ -548,9 +559,11 @@ async function onDelete(messageId: string): Promise<void> {
   color: var(--vw-text);
 }
 .reaction-pill:hover { border-color: var(--vw-purple-light); }
+/* "Mine" pills go mint instead of purple — splash of secondary colour to
+   break up the otherwise all-purple chat. */
 .reaction-pill.mine {
-  border-color: var(--vw-purple-mid);
-  background: rgba(113, 58, 190, 0.2);
+  border-color: var(--vw-green-strong);
+  background: rgba(123, 196, 123, 0.15);
 }
 
 .reaction-count {

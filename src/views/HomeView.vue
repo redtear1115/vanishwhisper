@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useIdentity } from '../identity'
-import { useLabels } from '../labels'
+import { avatarInitials, avatarScheme, sessionDisplay, useLabels } from '../labels'
 import { useSessions } from '../sessions'
 import AppLogo from '../components/AppLogo.vue'
 
@@ -33,20 +33,21 @@ function relativeTime(d: Date | null): string {
   return `${Math.floor(sec / 86400)}d ago`
 }
 
-// All three derived helpers consult the per-user label store first and
-// fall back to UID-derived defaults so a session always has *something*
-// to show, even before the user has named anything.
-function titleFor(id: string): string {
-  return labels.value.get(id)?.sessionName ?? `${id.slice(0, 14)}…`
+// Both lines come from sessionDisplay() so labelled and unlabelled sessions
+// follow exactly the same rules: friendly name on top, UID-derived id(s)
+// always preserved as secondary so identity stays verifiable at a glance.
+function display(id: string, otherUid: string) {
+  return sessionDisplay(labels.value, id, otherUid, { sessionShortLen: 14, otherShortLen: 12 })
 }
 
-function otherFor(id: string, otherUid: string): string {
-  return labels.value.get(id)?.otherName ?? `${otherUid.slice(0, 12)}…`
+function avatarLabel(id: string, otherUid: string): string {
+  return avatarInitials(labels.value.get(id)?.otherName ?? otherUid)
 }
 
-function avatarFor(id: string, otherUid: string): string {
-  const name = labels.value.get(id)?.otherName ?? otherUid
-  return name.slice(0, 2).toUpperCase()
+// Hash on the other party's UID — stable per contact, not per session, so
+// the same person looks the same colour across multiple sessions with them.
+function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
+  return avatarScheme(otherUid)
 }
 </script>
 
@@ -90,12 +91,15 @@ function avatarFor(id: string, otherUid: string): string {
           :to="{ name: 'session', params: { id: s.id } }"
           class="session-item"
         >
-          <div class="session-avatar">
-            {{ avatarFor(s.id, s.otherParticipant) }}
+          <div
+            class="session-avatar"
+            :class="`scheme-${avatarSchemeFor(s.otherParticipant)}`"
+          >
+            {{ avatarLabel(s.id, s.otherParticipant) }}
           </div>
           <div class="session-info">
-            <span class="session-id">{{ titleFor(s.id) }}</span>
-            <span class="session-meta">with {{ otherFor(s.id, s.otherParticipant) }}</span>
+            <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
+            <span class="session-meta">{{ display(s.id, s.otherParticipant).secondary }}</span>
           </div>
           <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
         </router-link>
@@ -200,14 +204,20 @@ function avatarFor(id: string, otherUid: string): string {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--vw-purple-deep);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 500;
-  color: var(--vw-purple-pale);
   flex-shrink: 0;
+}
+.session-avatar.scheme-purple {
+  background: var(--vw-purple-deep);
+  color: var(--vw-purple-pale);
+}
+.session-avatar.scheme-green {
+  background: var(--vw-green-deep);
+  color: var(--vw-green);
 }
 
 .session-info {

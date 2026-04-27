@@ -83,6 +83,14 @@ code {
   color: var(--vw-purple-light);
   border: 0.5px solid var(--vw-border2);
 }
+/* "Live" state — used on chat-message vanish pills once the recipient has
+   acked the read. Mint green signals a running countdown, distinguishing it
+   visually from the dim purple "unread" state. */
+.vw-pill--live {
+  background: var(--vw-green-dim);
+  color: var(--vw-green-strong);
+  border-color: #2D4A2D;
+}
 
 .vw-btn-primary {
   display: inline-flex;
