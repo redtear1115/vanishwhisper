@@ -27,6 +27,12 @@ const sending = ref(false)
 const sendingImage = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
+// Lightbox: when non-null, render a fullscreen overlay showing this blob URL.
+// We hold the URL string directly (not the message id) so the overlay keeps
+// rendering even if the underlying message vanishes mid-view — the blob URL
+// stays valid until subscribeMessages revokes it on next snapshot, which
+// gives the user a moment to dismiss before it goes blank.
+const lightboxUrl = ref<string | null>(null)
 const now = ref(Date.now())
 const myMinutes = ref<number | null>(null)
 const otherMinutes = ref<number | null>(null)
@@ -153,6 +159,7 @@ onMounted(async () => {
 
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onDocumentKeydown)
 })
 
 onUnmounted(() => {
@@ -161,6 +168,10 @@ onUnmounted(() => {
   unsubOtherMinutes?.()
   if (timer !== null) clearInterval(timer)
   document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onDocumentKeydown)
+  // Defensive: if the user navigates away with the lightbox still open,
+  // restore the body scroll lock we set in openLightbox.
+  document.body.style.overflow = ''
 })
 
 // When either side's vanish window updates, blow away the progress-line
@@ -388,6 +399,25 @@ function onDocumentClick(): void {
   }
 }
 
+// Lightbox open/close + Esc-to-close. Body scroll is locked while open so
+// the chat doesn't scroll under the overlay when the user wheels on the
+// image (browser pinch-zoom on mobile still works fine).
+function openLightbox(url: string): void {
+  lightboxUrl.value = url
+  document.body.style.overflow = 'hidden'
+}
+
+function closeLightbox(): void {
+  lightboxUrl.value = null
+  document.body.style.overflow = ''
+}
+
+function onDocumentKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && lightboxUrl.value !== null) {
+    closeLightbox()
+  }
+}
+
 async function onDelete(messageId: string): Promise<void> {
   try {
     await deleteMessage(messageId)
@@ -493,6 +523,7 @@ async function onDelete(messageId: string): Promise<void> {
             :height="m.attachment.height"
             class="msg-image"
             alt=""
+            @click.stop="openLightbox(m.attachment!.blobUrl!)"
           />
           <span v-else-if="m.attachment" class="decrypt-err">[unable to decrypt image]</span>
           <span v-if="m.text">{{ m.text }}</span>
@@ -546,6 +577,22 @@ async function onDelete(messageId: string): Promise<void> {
         </div>
       </div>
     </div>
+
+    <!-- Lightbox overlay — teleported to body so it escapes any parent
+         stacking context (chat header, input bar, etc.) and covers the
+         viewport regardless of where this template lives. Click anywhere
+         (backdrop or image) closes; Esc also closes via document keydown. -->
+    <Teleport to="body">
+      <div v-if="lightboxUrl" class="lightbox" @click="closeLightbox">
+        <img :src="lightboxUrl" class="lightbox-image" alt="" />
+        <button
+          type="button"
+          class="lightbox-close"
+          aria-label="Close"
+          @click.stop="closeLightbox"
+        >×</button>
+      </div>
+    </Teleport>
 
     <!-- Input bar -->
     <form v-if="opened" class="input-bar" @submit.prevent="send">
@@ -930,6 +977,7 @@ async function onDelete(messageId: string): Promise<void> {
   height: auto;
   border-radius: 10px;
   background: var(--vw-surface);
+  cursor: zoom-in;
 }
 /* Image-only bubbles: drop the bubble's chrome so the image looks like the
    bubble itself. Keeps the rounded corners from the bubble class but
@@ -941,5 +989,55 @@ async function onDelete(messageId: string): Promise<void> {
 }
 .msg-bubble.has-image .msg-image {
   border-radius: 12px;
+}
+
+/* ── Lightbox ── */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  cursor: zoom-out;
+  /* Backdrop fade in feels less jarring than a hard pop */
+  animation: lightbox-fade 0.12s ease-out;
+}
+@keyframes lightbox-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.lightbox-image {
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  cursor: zoom-out;
+  border-radius: 6px;
+}
+.lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: white;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 </style>
