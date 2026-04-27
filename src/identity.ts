@@ -1,6 +1,7 @@
 import { signInAnonymously, onAuthStateChanged, type User } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { ref, type Ref } from 'vue'
+import { bytesToBase64 } from './codec'
 import { auth, db } from './firebase'
 
 const IDB_NAME = 'vanishwhisper'
@@ -81,7 +82,7 @@ async function ensureIdentity(user: User): Promise<Identity> {
     pair = { publicKey, privateKey }
     await idbPut(pair)
   }
-  const publicKeySpkiBase64 = bufferToBase64(publicKeySpki)
+  const publicKeySpkiBase64 = bytesToBase64(publicKeySpki)
   await ensureUsersDoc(user.uid, publicKeySpkiBase64)
   return { uid: user.uid, keyPair: pair, publicKeySpkiBase64 }
 }
@@ -147,9 +148,3 @@ async function idbPut(pair: CryptoKeyPair): Promise<void> {
   })
 }
 
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let s = ''
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
-  return btoa(s)
-}

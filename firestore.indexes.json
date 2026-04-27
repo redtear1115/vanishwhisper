@@ -4,14 +4,8 @@
       "collectionGroup": "ChatMessages",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "UpdatedAt",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "DeletedAt",
-          "order": "DESCENDING"
-        }
+        { "fieldPath": "SessionID", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "ASCENDING" }
       ]
     }
   ],

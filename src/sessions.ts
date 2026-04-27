@@ -13,6 +13,7 @@ import {
   type Timestamp,
 } from 'firebase/firestore'
 import { onScopeDispose, ref, type Ref } from 'vue'
+import { base64ToBytes, bytesToBase64 } from './codec'
 import { db } from './firebase'
 import { getIdentity } from './identity'
 
@@ -43,13 +44,46 @@ export async function createSession(inviteeUid: string): Promise<string> {
   const sessionRef = await addDoc(collection(db, 'ChatSessions'), {
     Participant1: me.uid,
     Participant2: inviteeUid,
-    WrappedKey1: bufferToBase64(wrapped1),
-    WrappedKey2: bufferToBase64(wrapped2),
+    WrappedKey1: bytesToBase64(wrapped1),
+    WrappedKey2: bytesToBase64(wrapped2),
     Name: '',
     CreatedAt: serverTimestamp(),
     UpdatedAt: serverTimestamp(),
   })
   return sessionRef.id
+}
+
+export interface OpenSession {
+  id: string
+  myUid: string
+  otherParticipant: string
+  sessionKey: CryptoKey
+}
+
+export async function openSession(sessionId: string): Promise<OpenSession> {
+  const me = getIdentity()
+  const snap = await getDoc(doc(db, 'ChatSessions', sessionId))
+  if (!snap.exists()) throw new Error('Session not found.')
+  const d = snap.data()
+  const p1 = d.Participant1 as string
+  const p2 = d.Participant2 as string
+  if (p1 !== me.uid && p2 !== me.uid) throw new Error('Not a participant of this session.')
+  const myWrappedBase64 = (p1 === me.uid ? d.WrappedKey1 : d.WrappedKey2) as string
+  const aesRaw = await crypto.subtle.decrypt(
+    { name: 'RSA-OAEP' },
+    me.keyPair.privateKey,
+    base64ToBytes(myWrappedBase64),
+  )
+  const sessionKey = await crypto.subtle.importKey('raw', aesRaw, { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ])
+  return {
+    id: sessionId,
+    myUid: me.uid,
+    otherParticipant: p1 === me.uid ? p2 : p1,
+    sessionKey,
+  }
 }
 
 export interface ChatSessionRow {
@@ -132,9 +166,3 @@ async function importRsaPublicKey(spkiBase64: string): Promise<CryptoKey> {
   )
 }
 
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let s = ''
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
-  return btoa(s)
-}

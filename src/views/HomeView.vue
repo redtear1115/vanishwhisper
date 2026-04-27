@@ -45,7 +45,10 @@ function relativeTime(d: Date | null): string {
     <p v-else-if="sessions.length === 0">No sessions yet.</p>
     <ul v-else>
       <li v-for="s in sessions" :key="s.id">
-        <code>{{ s.id }}</code> — with <code>{{ s.otherParticipant }}</code>
+        <router-link :to="{ name: 'session', params: { id: s.id } }">
+          <code>{{ s.id }}</code>
+        </router-link>
+        — with <code>{{ s.otherParticipant }}</code>
         <span style="color: gray"> · {{ relativeTime(s.updatedAt) }}</span>
       </li>
     </ul>

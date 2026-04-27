@@ -3,21 +3,28 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isParticipant(sessionID) {
+      let session = get(/databases/$(database)/documents/ChatSessions/$(sessionID)).data;
+      return session.Participant1 == request.auth.uid
+             || session.Participant2 == request.auth.uid;
+    }
+
     // Phase 1 — Users: each user owns and writes their own doc; any
     // authenticated user can `get` a single Users doc (to fetch another
     // user's public key during invitation). `list` is intentionally not
     // allowed — UIDs are shared out-of-band, not enumerated.
     match /Users/{uid} {
       allow get: if request.auth != null;
-      allow create, update: if request.auth != null
-                            && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid;
     }
 
     // Phase 1 — ChatSessions: creator must be Participant1 and the invitee
     // (Participant2) must be a different existing user. Either participant
-    // can `read` the session (covers `get` for opening + `list` for the
-    // sessions list, evaluated per doc — clients must filter their list
-    // query by Participant1 == uid or Participant2 == uid).
+    // can `read` (covers `get` for opening + `list` for the home page —
+    // clients must filter by Participant1 == uid or Participant2 == uid).
+    // Either participant can `update`, but only the `UpdatedAt` field —
+    // used to bump on each new message so the session list re-sorts by
+    // most-recent-activity.
     match /ChatSessions/{sessionId} {
       allow read: if request.auth != null
                   && (resource.data.Participant1 == request.auth.uid
@@ -26,8 +33,21 @@ service cloud.firestore {
                     && request.resource.data.Participant1 == request.auth.uid
                     && request.resource.data.Participant2 != request.auth.uid
                     && exists(/databases/$(database)/documents/Users/$(request.resource.data.Participant2));
+      allow update: if request.auth != null
+                    && (resource.data.Participant1 == request.auth.uid
+                        || resource.data.Participant2 == request.auth.uid)
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt']);
     }
 
-    // ChatMessages — rules added when that feature lands.
+    // Phase 1 — ChatMessages: only session participants can read (per-doc
+    // rule applies to list queries — clients must filter by SessionID).
+    // Create only by a session participant; the message must be tagged
+    // with the sender's own UID.
+    match /ChatMessages/{messageId} {
+      allow read: if request.auth != null && isParticipant(resource.data.SessionID);
+      allow create: if request.auth != null
+                    && request.resource.data.UserID == request.auth.uid
+                    && isParticipant(request.resource.data.SessionID);
+    }
   }
 }
