@@ -113,9 +113,14 @@ onMounted(async () => {
   }
 })
 
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+})
+
 onUnmounted(() => {
   unsub?.()
   if (timer !== null) clearInterval(timer)
+  document.removeEventListener('click', onDocumentClick)
 })
 
 function ackUnread(rows: ChatMessageRow[]): void {
@@ -243,6 +248,22 @@ function showProgress(m: ChatMessageRow): boolean {
   return Boolean(m.readAt) && !isVanished(m, now.value)
 }
 
+// Adjacent visible messages with the same sender and the same bucketed vanish
+// label are visually a "group" — they share one progress line and one meta row
+// at the bottom so the screen isn't repeating "vanishes in 30m" three times in
+// a row. The anchor for the shared line / meta is the LAST message of the group
+// (most recent send): earlier messages in a group were read first and vanish
+// first, so anchoring on the latest means the line never "jumps back" as
+// earlier messages drop out — once the latest itself vanishes, the whole group
+// is already empty.
+function isLastOfGroup(idx: number): boolean {
+  const m = visibleMessages.value[idx]
+  const next = visibleMessages.value[idx + 1]
+  if (!next) return true
+  if (next.fromMe !== m.fromMe) return true
+  return vanishLabel(next) !== vanishLabel(m)
+}
+
 function iReacted(m: ChatMessageRow, emoji: string): boolean {
   if (!opened.value) return false
   return m.reactions[emoji]?.includes(opened.value.myUid) ?? false
@@ -257,6 +278,28 @@ async function onReact(messageId: string, emoji: string, hasMine: boolean): Prom
     await toggleReaction(messageId, emoji, hasMine)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// Picker is one-shot: clicking an emoji toggles the reaction and closes
+// the picker. Combined with click-outside-closes (document listener below)
+// this means there's no explicit "close" button — the picker behaves like
+// a transient menu instead of a sticky panel.
+async function onReactAndClose(
+  messageId: string,
+  emoji: string,
+  hasMine: boolean,
+): Promise<void> {
+  pickerOpenFor.value = null
+  await onReact(messageId, emoji, hasMine)
+}
+
+// Document-level click handler closes any open picker. The picker's open
+// trigger and emoji buttons all use @click.stop so clicks INSIDE the picker
+// never reach this — anything that does is by definition outside.
+function onDocumentClick(): void {
+  if (pickerOpenFor.value !== null) {
+    pickerOpenFor.value = null
   }
 }
 
@@ -339,40 +382,54 @@ async function onDelete(messageId: string): Promise<void> {
         No messages yet — say hi.
       </p>
       <div
-        v-for="m in visibleMessages"
+        v-for="(m, idx) in visibleMessages"
         :key="m.id"
         class="msg-row"
-        :class="m.fromMe ? 'msg-me' : 'msg-them'"
+        :class="[m.fromMe ? 'msg-me' : 'msg-them', isLastOfGroup(idx) ? 'group-end' : 'group-mid']"
       >
-        <!-- Bubble -->
+        <!-- Bubble (per-message). Unsend lives inside the bubble as a hover
+             affordance so even mid-group messages can be unsent — the shared
+             meta row below carries no per-message controls. -->
         <div
           class="msg-bubble"
           :class="m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them'"
         >
           <span v-if="m.text !== null">{{ m.text }}</span>
           <span v-else class="decrypt-err">[unable to decrypt]</span>
-        </div>
-
-        <!-- Vanish progress line — CSS-animated, depletes smoothly without JS ticks -->
-        <div v-if="showProgress(m)" class="msg-progress">
-          <div class="msg-progress-fill" :style="progressStyle(m)" />
-        </div>
-
-        <!-- Meta row: time · vanish pill · delete -->
-        <div class="msg-meta">
-          <span class="msg-time">{{ m.createdAt?.toLocaleTimeString() ?? '…' }}</span>
-          <span class="vw-pill" :class="{ 'vw-pill--live': m.readAt }">{{ vanishLabel(m) }}</span>
           <button
             v-if="m.fromMe"
-            class="delete-btn"
+            class="bubble-delete"
             type="button"
             title="Unsend"
-            @click="onDelete(m.id)"
-          >unsend</button>
+            @click.stop="onDelete(m.id)"
+          >×</button>
+          <!-- Reaction picker trigger — only on inbound messages, hover-revealed
+               like the unsend button. Stops propagation so the document
+               click-outside handler doesn't immediately re-close the picker. -->
+          <button
+            v-if="!m.fromMe"
+            class="bubble-react"
+            type="button"
+            title="React"
+            @click.stop="pickerOpenFor = m.id"
+          >+</button>
         </div>
 
-        <!-- Reactions row — picker only on inbound messages. Existing pills on
-             my own messages stay clickable so I can undo any pre-existing toggle. -->
+        <!-- Shared progress line + meta row — only on the LAST message of a
+             grouped run. Same-bucket adjacent messages from the same sender
+             collapse into one visual indicator instead of N. -->
+        <div v-if="isLastOfGroup(idx) && showProgress(m)" class="msg-progress">
+          <div class="msg-progress-fill" :style="progressStyle(m)" />
+        </div>
+        <div v-if="isLastOfGroup(idx)" class="msg-meta">
+          <span class="msg-time">{{ m.createdAt?.toLocaleTimeString() ?? '…' }}</span>
+          <span class="vw-pill" :class="{ 'vw-pill--live': m.readAt }">{{ vanishLabel(m) }}</span>
+        </div>
+
+        <!-- Reactions row — existing pills always visible (with counts). The
+             picker (extra emoji choices) is opened from the bubble's hover
+             "+" button, not from the row itself. .stop on each pill so a
+             toggle doesn't bubble out and trigger the click-outside close. -->
         <div class="reactions-row">
           <button
             v-for="emoji in REACTION_EMOJIS"
@@ -381,25 +438,10 @@ async function onDelete(messageId: string): Promise<void> {
             type="button"
             class="reaction-pill"
             :class="{ mine: iReacted(m, emoji) }"
-            @click="onReact(m.id, emoji, iReacted(m, emoji))"
+            @click.stop="onReactAndClose(m.id, emoji, iReacted(m, emoji))"
           >
             {{ emoji }}<span v-if="reactionCount(m, emoji) > 0" class="reaction-count"> {{ reactionCount(m, emoji) }}</span>
           </button>
-
-          <template v-if="!m.fromMe">
-            <button
-              v-if="pickerOpenFor !== m.id"
-              type="button"
-              class="react-open-btn"
-              @click="pickerOpenFor = m.id"
-            >+ react</button>
-            <button
-              v-else
-              type="button"
-              class="react-open-btn"
-              @click="pickerOpenFor = null"
-            >close</button>
-          </template>
         </div>
       </div>
     </div>
@@ -562,7 +604,10 @@ async function onDelete(messageId: string): Promise<void> {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  /* Small base gap — adjacent bubbles in the same vanish-bucket group sit
+     close together. Group boundaries get extra breathing room via
+     `.group-end { margin-bottom }` below. */
+  gap: 4px;
 }
 .chat-messages::-webkit-scrollbar { width: 4px; }
 .chat-messages::-webkit-scrollbar-track { background: transparent; }
@@ -576,6 +621,11 @@ async function onDelete(messageId: string): Promise<void> {
 }
 .msg-me   { align-self: flex-end; align-items: flex-end; }
 .msg-them { align-self: flex-start; align-items: flex-start; }
+/* Extra breathing room after the LAST message of a group so the shared meta
+   row clearly belongs to the group above and the next group starts visibly
+   apart. group-mid messages stay tight against their siblings. */
+.msg-row.group-end { margin-bottom: 10px; }
+.msg-row.group-end:last-child { margin-bottom: 0; }
 
 .decrypt-err { color: var(--vw-danger); font-style: italic; }
 
@@ -620,16 +670,54 @@ async function onDelete(messageId: string): Promise<void> {
   color: var(--vw-text3);
 }
 
-.delete-btn {
-  font-size: 10px;
+/* Per-bubble unsend — lives inside the bubble (hence position:relative on
+   `.msg-bubble` below) so even mid-group messages can be unsent without
+   a meta row. Hidden by default; revealed on hover. Touch users without
+   hover lose discoverability — acceptable trade for desktop cleanness in
+   the current phase. */
+.msg-bubble { position: relative; }
+.bubble-delete {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--vw-surface);
+  border: 0.5px solid var(--vw-border2);
   color: var(--vw-text3);
-  background: none;
-  border: none;
-  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
   padding: 0;
-  transition: color 0.15s;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
 }
-.delete-btn:hover { color: var(--vw-danger); }
+.msg-bubble:hover .bubble-delete { opacity: 1; }
+.bubble-delete:hover { color: var(--vw-danger); }
+
+/* Reaction picker trigger — same hover affordance pattern as bubble-delete,
+   on the opposite role (inbound only). Top-right of the bubble; absolute
+   so the bubble keeps its content-shrink width. */
+.bubble-react {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--vw-surface);
+  border: 0.5px solid var(--vw-border2);
+  color: var(--vw-text3);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.msg-bubble:hover .bubble-react { opacity: 1; }
+.bubble-react:hover { color: var(--vw-purple-pale); }
 
 /* ── Reactions ── */
 .reactions-row {
@@ -664,20 +752,6 @@ async function onDelete(messageId: string): Promise<void> {
   margin-left: 2px;
 }
 
-.react-open-btn {
-  font-size: 10px;
-  color: var(--vw-text3);
-  background: none;
-  border: 0.5px solid var(--vw-border);
-  border-radius: 99px;
-  padding: 2px 8px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.react-open-btn:hover {
-  color: var(--vw-purple-light);
-  border-color: var(--vw-border2);
-}
 
 /* ── Input bar ── */
 .input-bar {

@@ -55,7 +55,10 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   <div class="home">
     <header class="vw-topbar">
       <AppLogo size="sm" />
-      <span class="vw-badge-e2e">end-to-end encrypted</span>
+      <div class="topbar-right">
+        <router-link to="/profile" class="profile-link" title="Profile & vanish settings">⚙</router-link>
+        <span class="vw-badge-e2e">end-to-end encrypted</span>
+      </div>
     </header>
 
     <div class="home-body">
@@ -113,6 +116,29 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-link {
+  font-size: 16px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--vw-text2);
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s;
+}
+.profile-link:hover {
+  color: var(--vw-purple-pale);
+  background: var(--vw-surface2);
 }
 
 .home-body {
