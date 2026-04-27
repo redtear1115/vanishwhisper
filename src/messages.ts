@@ -97,9 +97,17 @@ export function subscribeMessages(
         }),
       )
       onUpdate(
-        Array.from(map.values()).sort(
-          (a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0),
-        ),
+        Array.from(map.values()).sort((a, b) => {
+          // Pending writes (the writer's own just-sent message before the
+          // server confirms serverTimestamp()) come back with createdAt =
+          // null. Sorting null as 0 would briefly slot the new message at
+          // the TOP of the list and snap it back to the bottom on the
+          // confirm — visible jank. Sort null as MAX_SAFE_INTEGER instead
+          // so pending messages settle at the bottom from the first frame.
+          const aT = a.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER
+          const bT = b.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER
+          return aT - bT
+        }),
       )
     },
     onError,

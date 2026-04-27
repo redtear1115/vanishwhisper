@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getIdentity } from '../identity'
 import { sessionDisplay, setLabel, useLabels } from '../labels'
 import {
@@ -31,6 +31,31 @@ const otherMinutes = ref<number | null>(null)
 const readFired = new Set<string>()
 const deletedFired = new Set<string>()
 const pickerOpenFor = ref<string | null>(null)
+
+// Auto-scroll: keep the chat pinned to the bottom when the user is already
+// there (so new messages stay visible without manual scroll). If they've
+// scrolled up to read older history, leave their position alone — only
+// resume sticking once they scroll back down. Sending a message also forces
+// stick-to-bottom because the user clearly wants to see what they just sent.
+const messagesContainerRef = ref<HTMLElement | null>(null)
+let stickToBottom = true
+
+function isNearBottom(): boolean {
+  const el = messagesContainerRef.value
+  if (!el) return true
+  const slack = 80 // px — counts as "at bottom" if within this gap
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - slack
+}
+
+function scrollToBottom(): void {
+  const el = messagesContainerRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+function onChatScroll(): void {
+  stickToBottom = isNearBottom()
+}
 
 // Inline rename panel for the session and other-party display labels.
 const renaming = ref(false)
@@ -172,12 +197,25 @@ async function send(): Promise<void> {
   try {
     await sendMessage(props.id, opened.value.sessionKey, draft.value)
     draft.value = ''
+    // Force stick — even if the user had scrolled up, sending obviously
+    // means they want to see what they just sent.
+    stickToBottom = true
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     sending.value = false
   }
 }
+
+// Pin to bottom whenever the visible message list grows / shrinks if the
+// user is sticking. Runs after Vue paints so scrollHeight reflects the new
+// content. Initial mount counts: visibleMessages goes [] → first batch
+// triggers this watcher, which scrolls to the latest immediately on open.
+watch(visibleMessages, async () => {
+  if (!stickToBottom) return
+  await nextTick()
+  scrollToBottom()
+})
 
 // Bucketed vanish text — coarser as the remaining time grows so the label
 // barely changes for most of a message's life. Result: Vue's diff sees the
@@ -377,7 +415,12 @@ async function onDelete(messageId: string): Promise<void> {
     </div>
 
     <!-- Messages -->
-    <div v-else-if="opened" class="chat-messages">
+    <div
+      v-else-if="opened"
+      ref="messagesContainerRef"
+      class="chat-messages"
+      @scroll="onChatScroll"
+    >
       <p v-if="visibleMessages.length === 0" class="chat-empty">
         No messages yet — say hi.
       </p>
