@@ -6,6 +6,7 @@ import {
   deleteMessage,
   markDeleted,
   markRead,
+  sendImageMessage,
   sendMessage,
   subscribeMessages,
   toggleReaction,
@@ -23,6 +24,8 @@ const opened = ref<OpenSession | null>(null)
 const messages = ref<ChatMessageRow[]>([])
 const draft = ref('')
 const sending = ref(false)
+const sendingImage = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
 const now = ref(Date.now())
 const myMinutes = ref<number | null>(null)
@@ -225,6 +228,29 @@ async function send(): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     sending.value = false
+  }
+}
+
+function openFilePicker(): void {
+  fileInputRef.value?.click()
+}
+
+async function onFileSelected(e: Event): Promise<void> {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  // Reset so the same file can be picked again (browsers won't fire change
+  // for the same path twice in a row otherwise).
+  target.value = ''
+  if (!file || !opened.value) return
+  sendingImage.value = true
+  error.value = null
+  try {
+    await sendImageMessage(props.id, opened.value.sessionKey, file)
+    stickToBottom = true
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    sendingImage.value = false
   }
 }
 
@@ -453,13 +479,24 @@ async function onDelete(messageId: string): Promise<void> {
       >
         <!-- Bubble (per-message). Unsend lives inside the bubble as a hover
              affordance so even mid-group messages can be unsent — the shared
-             meta row below carries no per-message controls. -->
+             meta row below carries no per-message controls. Image attachments
+             render before any text caption (currently no caption UI, so it's
+             one or the other). -->
         <div
           class="msg-bubble"
-          :class="m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them'"
+          :class="[m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them', { 'has-image': m.attachment }]"
         >
-          <span v-if="m.text !== null">{{ m.text }}</span>
-          <span v-else class="decrypt-err">[unable to decrypt]</span>
+          <img
+            v-if="m.attachment?.blobUrl"
+            :src="m.attachment.blobUrl"
+            :width="m.attachment.width"
+            :height="m.attachment.height"
+            class="msg-image"
+            alt=""
+          />
+          <span v-else-if="m.attachment" class="decrypt-err">[unable to decrypt image]</span>
+          <span v-if="m.text">{{ m.text }}</span>
+          <span v-else-if="m.text === null" class="decrypt-err">[unable to decrypt]</span>
           <button
             v-if="m.fromMe"
             class="bubble-delete"
@@ -512,14 +549,32 @@ async function onDelete(messageId: string): Promise<void> {
 
     <!-- Input bar -->
     <form v-if="opened" class="input-bar" @submit.prevent="send">
+      <button
+        type="button"
+        class="attach-btn"
+        :disabled="sending || sendingImage"
+        :title="sendingImage ? 'Sending image…' : 'Attach image (max 5 MB)'"
+        @click="openFilePicker"
+      >📎</button>
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept="image/*"
+        class="file-input-hidden"
+        @change="onFileSelected"
+      />
       <input
         v-model="draft"
         class="vw-input-pill"
-        :disabled="sending"
+        :disabled="sending || sendingImage"
         placeholder="Type a message…"
         required
       />
-      <button type="submit" class="vw-btn-send" :disabled="sending || !draft">
+      <button
+        type="submit"
+        class="vw-btn-send"
+        :disabled="sending || sendingImage || !draft"
+      >
         <span class="send-icon" />
       </button>
     </form>
@@ -839,4 +894,52 @@ async function onDelete(messageId: string): Promise<void> {
 }
 
 .vw-btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Attach button + hidden file input ── */
+.attach-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--vw-text2);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.attach-btn:hover:not(:disabled) {
+  color: var(--vw-purple-pale);
+  background: var(--vw-surface2);
+}
+.attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.file-input-hidden {
+  display: none;
+}
+
+/* ── Image attachments inside bubbles ── */
+.msg-image {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 320px;
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  background: var(--vw-surface);
+}
+/* Image-only bubbles: drop the bubble's chrome so the image looks like the
+   bubble itself. Keeps the rounded corners from the bubble class but
+   removes the surrounding padding/background that would look like a frame. */
+.msg-bubble.has-image {
+  padding: 4px;
+  background: transparent;
+  border: none;
+}
+.msg-bubble.has-image .msg-image {
+  border-radius: 12px;
+}
 </style>
