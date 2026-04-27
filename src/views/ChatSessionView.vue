@@ -12,7 +12,7 @@ import {
   type ChatMessageRow,
 } from '../messages'
 import { openSession, type OpenSession } from '../sessions'
-import { getDeletedInMinutes } from '../users'
+import { subscribeDeletedInMinutes } from '../users'
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 
@@ -105,6 +105,8 @@ async function saveLabels(): Promise<void> {
 }
 
 let unsub: (() => void) | null = null
+let unsubMyMinutes: (() => void) | null = null
+let unsubOtherMinutes: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
@@ -112,12 +114,20 @@ onMounted(async () => {
     const session = await openSession(props.id)
     opened.value = session
     const me = getIdentity()
-    const [mine, theirs] = await Promise.all([
-      getDeletedInMinutes(me.uid),
-      getDeletedInMinutes(session.otherParticipant),
-    ])
-    myMinutes.value = mine
-    otherMinutes.value = theirs
+    // Live subscriptions instead of one-shot reads — when the OTHER party
+    // updates their DeletedInMinutes via Profile, this fires and the
+    // existing message progress lines + bucketed labels recompute against
+    // the new value (cache invalidation handled by the watch below).
+    unsubMyMinutes = subscribeDeletedInMinutes(
+      me.uid,
+      (m) => { myMinutes.value = m },
+      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+    )
+    unsubOtherMinutes = subscribeDeletedInMinutes(
+      session.otherParticipant,
+      (m) => { otherMinutes.value = m },
+      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+    )
     unsub = subscribeMessages(
       props.id,
       session.sessionKey,
@@ -144,8 +154,19 @@ onMounted(() => {
 
 onUnmounted(() => {
   unsub?.()
+  unsubMyMinutes?.()
+  unsubOtherMinutes?.()
   if (timer !== null) clearInterval(timer)
   document.removeEventListener('click', onDocumentClick)
+})
+
+// When either side's vanish window updates, blow away the progress-line
+// cache so existing messages recompute their CSS animation duration. The
+// cache is keyed by (messageId, readAt) which doesn't include minutes, so
+// without this the in-flight animation would keep its original duration
+// even after Vue re-renders the inline style.
+watch([myMinutes, otherMinutes], () => {
+  progressStyleCache.clear()
 })
 
 function ackUnread(rows: ChatMessageRow[]): void {

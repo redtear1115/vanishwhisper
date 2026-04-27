@@ -1,14 +1,11 @@
-import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { db } from './firebase'
 
-// Cached because per-message vanish countdowns read this constantly. The value
-// is per-user-doc and changes only when the user edits their settings, so a
-// process-lifetime cache is fine for now: setDeletedInMinutes() updates the
-// cache for the writer in-place, and the chat view re-fetches both sides on
-// each mount, so navigating away and back picks up the latest value. We
-// deliberately don't subscribe to Users docs — that would mean a snapshot
-// listener per open chat per participant just to catch a setting that
-// changes a few times in a session's lifetime.
+// One-shot cache for the Profile page (which reads-then-writes on mount).
+// The chat view doesn't go through this — it uses subscribeDeletedInMinutes()
+// below so it picks up the OTHER party's edits live, not just on remount.
+// setDeletedInMinutes() and the subscription both seed this cache so any
+// future getDeletedInMinutes() call returns the latest known value.
 const cache = new Map<string, number>()
 
 export async function getDeletedInMinutes(uid: string): Promise<number> {
@@ -34,4 +31,29 @@ export async function setDeletedInMinutes(uid: string, minutes: number): Promise
     UpdatedAt: serverTimestamp(),
   })
   cache.set(uid, rounded)
+}
+
+// Subscribe to a user's DeletedInMinutes. The chat view uses this for both
+// participants so that when the other party edits their vanish window via
+// the Profile page, our open chat picks up the new value live — without
+// this, the cache stays stuck at the value loaded on chat mount and we'd
+// keep rendering "vanishes in 1h" for messages that should be 5 min away.
+// Cost: one listener per participant per open chat (so 2 per chat). The
+// setting changes rarely, so traffic is negligible.
+export function subscribeDeletedInMinutes(
+  uid: string,
+  onChange: (minutes: number) => void,
+  onError?: (err: unknown) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, 'Users', uid),
+    (snap) => {
+      if (!snap.exists()) return
+      const m = snap.get('DeletedInMinutes') as number | undefined
+      if (typeof m !== 'number') return
+      cache.set(uid, m)
+      onChange(m)
+    },
+    onError,
+  )
 }
