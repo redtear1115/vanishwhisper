@@ -59,6 +59,16 @@ const { identity, error } = useIdentity()
   /* Subtle floating shadow under the ghost so it doesn't look pasted onto
      the bg. Mint green to echo the brand secondary, very low opacity. */
   filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--vw-purple-mid) 40%, transparent));
+  animation: ghost-fade 2.8s ease-in-out infinite;
+}
+
+@keyframes ghost-fade {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-mascot { animation: none; }
 }
 
 .loading-dots {
