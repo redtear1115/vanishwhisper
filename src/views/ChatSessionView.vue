@@ -98,20 +98,20 @@ const savingLabels = ref(false)
 // item-click, click-outside (document handler), or Esc (keydown handler).
 const menuOpen = ref(false)
 
-// Two-line header derived from sessionDisplay() — friendly name promotes
-// to the title; the underlying session id (when a name is set) plus the
-// "with X" segment (with otherUid suffix when otherName is set) drop to
-// the subtitle so the IDs always remain visible (per user request).
+// Header display derived from sessionDisplay(). See its doc comment for the
+// four-state matrix. Pre-load placeholder uses sessionName if available
+// (instant from labels store) and falls back to bare "Chat" while
+// openSession() is in flight — once the other participant uid is known
+// the proper "Chat with X" title takes over.
 const headerDisplay = computed(() => {
   if (!opened.value) {
     const lbl = labels.value.get(props.id)
     return {
-      primary: lbl?.sessionName ?? `${props.id.slice(0, 10)}…`,
+      primary: lbl?.sessionName ?? 'Chat',
       secondary: '',
     }
   }
   return sessionDisplay(labels.value, props.id, opened.value.otherParticipant, {
-    sessionShortLen: 10,
     otherShortLen: 16,
   })
 })
@@ -586,6 +586,18 @@ async function onAgreeDelete(): Promise<void> {
         />
       </label>
       <p class="rename-hint">Stored locally only — never uploaded.</p>
+
+      <!-- Underlying ids — only place these surface in the UI. The rename
+           panel is the natural home: user is in "manage labels" mode here,
+           and seeing what each label "covers" helps when verifying you're
+           naming the right person. -->
+      <div class="rename-meta">
+        <p><span class="rename-meta-label">Session id</span> <code>{{ props.id }}</code></p>
+        <p v-if="opened">
+          <span class="rename-meta-label">Other UID</span> <code>{{ opened.otherParticipant }}</code>
+        </p>
+      </div>
+
       <div class="rename-actions">
         <button
           type="button"
@@ -913,6 +925,31 @@ async function onAgreeDelete(): Promise<void> {
   font-size: 11px;
   color: var(--vw-text3);
   margin: 0;
+}
+
+/* Underlying ids info — sits between the label inputs and the action row,
+   visually separated by a top border so it's clearly "what's actually
+   there" reference data, not editable. */
+.rename-meta {
+  margin: 4px 0 2px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--vw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vw-text3);
+}
+.rename-meta p { margin: 0; }
+.rename-meta-label {
+  display: inline-block;
+  min-width: 70px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.rename-meta code {
+  word-break: break-all;
 }
 
 .rename-actions {

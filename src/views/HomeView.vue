@@ -17,11 +17,11 @@ function relativeTime(d: Date | null): string {
   return `${Math.floor(sec / 86400)}d ago`
 }
 
-// Both lines come from sessionDisplay() so labelled and unlabelled sessions
-// follow exactly the same rules: friendly name on top, UID-derived id(s)
-// always preserved as secondary so identity stays verifiable at a glance.
+// Same display logic as the chat header — labels REPLACE the underlying
+// identifiers on the surface; the raw UIDs are accessed via the rename
+// panel inside each chat. See sessionDisplay() doc comment.
 function display(id: string, otherUid: string) {
-  return sessionDisplay(labels.value, id, otherUid, { sessionShortLen: 14, otherShortLen: 12 })
+  return sessionDisplay(labels.value, id, otherUid, { otherShortLen: 12 })
 }
 
 function avatarLabel(id: string, otherUid: string): string {
@@ -84,7 +84,13 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
           </div>
           <div class="session-info">
             <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
-            <span class="session-meta">{{ display(s.id, s.otherParticipant).secondary }}</span>
+            <!-- Subtitle only appears when sessionName is set (display.secondary
+                 carries "with X" then). Unlabelled rows collapse to a single
+                 line so the whole list reads cleanly. -->
+            <span
+              v-if="display(s.id, s.otherParticipant).secondary"
+              class="session-meta"
+            >{{ display(s.id, s.otherParticipant).secondary }}</span>
           </div>
           <div class="session-trailing">
             <span

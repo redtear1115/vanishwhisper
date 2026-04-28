@@ -87,31 +87,40 @@ export interface SessionDisplay {
   secondary: string
 }
 
-// Derives the two-line session display: when a label is set, the friendly
-// name promotes to `primary` and the UID-derived fallback drops to `secondary`
-// so the underlying identifiers always remain visible (request from the
-// user — labels don't *replace* the IDs, they *augment* them).
+// Two-line session display for the chat header AND home list. Session id is
+// treated as an internal Firestore key and never surfaces here — labels are
+// edited in the chat's rename panel where the underlying ids are shown as
+// info text for power-user verification. Other-party identity DOES surface
+// (label or truncated UID) because that's "who you're talking to".
+//
+// Behaviour:
+//   neither label set         → `Chat with d71Y…wLm8` / (no subtitle)
+//   sessionName only          → `My Chat`             / `with d71Y…wLm8`
+//   otherName only            → `Chat with Mann`      / (no subtitle)
+//   both labels               → `My Chat`             / `with Mann`
+//
+// Earlier iteration (pre-2026-04) tried to "augment never replace" by piling
+// the truncated session id and uid into the subtitle on every row. That made
+// labelled sessions HARDER to read than unlabelled ones — three pieces of
+// identity (sessionId · with X · otherUid) crammed into one line. Now labels
+// REPLACE in display surfaces and the underlying ids live exclusively in the
+// rename panel.
 export function sessionDisplay(
   labels: Map<string, SessionLabel>,
   sessionId: string,
   otherUid: string,
-  opts: { sessionShortLen?: number; otherShortLen?: number } = {},
+  opts: { otherShortLen?: number } = {},
 ): SessionDisplay {
-  const sessionLen = opts.sessionShortLen ?? 14
   const otherLen = opts.otherShortLen ?? 12
   const lbl = labels.get(sessionId)
-  const sessionShort = `${sessionId.slice(0, sessionLen)}…`
-  const otherShort = `${otherUid.slice(0, otherLen)}…`
-  const primary = lbl?.sessionName ?? sessionShort
-  const parts: string[] = []
-  // If the title is the friendly name, surface the underlying session id in
-  // the secondary line. (If no name, the id is already the title — don't
-  // duplicate.)
-  if (lbl?.sessionName) parts.push(sessionShort)
-  // Always include the other-party segment. If the user has named them,
-  // append the UID-fingerprint so identity is still verifiable at a glance.
-  parts.push(lbl?.otherName ? `with ${lbl.otherName} · ${otherShort}` : `with ${otherShort}`)
-  return { primary, secondary: parts.join(' · ') }
+  const otherDisplay = lbl?.otherName ?? `${otherUid.slice(0, otherLen)}…`
+  // Title falls back to "Chat with X" rather than the session id — matches
+  // chat-app convention (WhatsApp / iMessage / Signal: the chat IS the
+  // contact, no separate "session name" concept). Subtitle only appears
+  // when sessionName takes the title slot, to clarify who the chat is with.
+  const primary = lbl?.sessionName ?? `Chat with ${otherDisplay}`
+  const secondary = lbl?.sessionName ? `with ${otherDisplay}` : ''
+  return { primary, secondary }
 }
 
 // Per-contact avatar colour — hash the *other party's* UID into a small
