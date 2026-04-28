@@ -73,3 +73,7 @@ dist/
 
 # Claude Code local context (kept out of the repo)
 CLAUDE.md
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
