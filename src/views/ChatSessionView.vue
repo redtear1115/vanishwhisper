@@ -36,6 +36,7 @@ const draft = ref('')
 const sending = ref(false)
 const sendingImage = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const draftInputRef = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
 // Lightbox: when non-null, render a fullscreen overlay showing this blob URL.
 // We hold the URL string directly (not the message id) so the overlay keeps
@@ -279,6 +280,12 @@ async function send(): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     sending.value = false
+    // Chrome drops focus the moment an input flips to disabled and
+    // doesn't restore it when re-enabled; Safari is laxer. Refocus on
+    // the next tick so the disabled attr has flushed first — focusing a
+    // still-disabled element silently no-ops.
+    await nextTick()
+    draftInputRef.value?.focus()
   }
 }
 
@@ -302,6 +309,11 @@ async function onFileSelected(e: Event): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     sendingImage.value = false
+    // Same Chrome focus quirk as send() — the text input flips disabled
+    // during the upload and won't auto-refocus. Restore so the user can
+    // type a follow-up without re-clicking.
+    await nextTick()
+    draftInputRef.value?.focus()
   }
 }
 
@@ -722,6 +734,7 @@ async function onAgreeDelete(): Promise<void> {
         @change="onFileSelected"
       />
       <input
+        ref="draftInputRef"
         v-model="draft"
         class="vw-input-pill"
         :disabled="sending || sendingImage"
