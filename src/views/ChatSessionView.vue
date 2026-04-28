@@ -350,33 +350,42 @@ watch(visibleMessages, async () => {
   scrollToBottom()
 })
 
-// Bucketed vanish text — coarser as the remaining time grows so the label
-// barely changes for most of a message's life. Result: Vue's diff sees the
-// same string across most ticks and skips the DOM update, so the screen
-// stops feeling like it's constantly moving. The smooth-depleting horizontal
-// line below the bubble carries the per-second visual signal.
-//   <60s          → second precision  ("45s")
-//   60s – 5min    → minute precision  ("4m")
-//   5min – 15min  → 5-minute steps    ("10m")
-//   15min – 1hr   → 15-minute steps   ("45m")
-//   1hr+          → hour precision    ("2h")
+// Bucketed vanish text. CEIL-based rounding so the very first label after
+// readAt matches the user's configured value (1h setting → "vanishes in 1h"
+// from frame one). Floor-based rounding would slot a sub-60-min remaining
+// into the 15-min bucket and round it down to "45m" before the user even
+// sees the message land — confusing.
+//
+// Semantics: each label means "AT MOST this much remaining". Coarser
+// precision as remaining grows so most ticks render the same string and
+// Vue's diff skips the DOM update — only the final minute (sub-60s bucket)
+// actually re-paints per second. The CSS-animated line below the bubble
+// carries the smooth per-second visual signal.
+//
+//   <60s    → seconds        ("45s"),  60s rounds up to "1m"
+//   1m–5m   → whole minutes  ("4m")
+//   5m–15m  → 5-min steps    ("10m")
+//   15m–1h  → 15-min steps   ("45m"),  60m rounds up to "1h"
+//   ≥1h     → whole hours    ("2h")
 function vanishLabel(m: ChatMessageRow): string {
   const at = vanishAtMs(m)
   if (at === null) return 'unread'
   const remaining = Math.max(0, at - now.value)
   if (remaining < 60_000) {
-    return `vanishes in ${Math.ceil(remaining / 1000)}s`
+    const s = Math.ceil(remaining / 1000)
+    return s >= 60 ? 'vanishes in 1m' : `vanishes in ${s}s`
   }
   if (remaining < 5 * 60_000) {
-    return `vanishes in ${Math.floor(remaining / 60_000)}m`
+    return `vanishes in ${Math.ceil(remaining / 60_000)}m`
   }
   if (remaining < 15 * 60_000) {
-    return `vanishes in ${Math.floor(remaining / 60_000 / 5) * 5}m`
+    return `vanishes in ${Math.ceil(remaining / 60_000 / 5) * 5}m`
   }
   if (remaining < 60 * 60_000) {
-    return `vanishes in ${Math.floor(remaining / 60_000 / 15) * 15}m`
+    const v = Math.ceil(remaining / 60_000 / 15) * 15
+    return v >= 60 ? 'vanishes in 1h' : `vanishes in ${v}m`
   }
-  return `vanishes in ${Math.floor(remaining / 3_600_000)}h`
+  return `vanishes in ${Math.ceil(remaining / 3_600_000)}h`
 }
 
 // Horizontal vanish line — driven entirely by CSS keyframes so the browser
