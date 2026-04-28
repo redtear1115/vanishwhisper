@@ -21,9 +21,8 @@ const IDB_VERSION = 3
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
-export function openIdb(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve, reject) => {
+function openConnection(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, IDB_VERSION)
     req.onupgradeneeded = (event) => {
       const db = req.result
@@ -38,8 +37,60 @@ export function openIdb(): Promise<IDBDatabase> {
         db.createObjectStore('labels', { keyPath: 'sessionId' })
       }
     }
-    req.onsuccess = () => resolve(req.result)
+    req.onsuccess = () => {
+      const db = req.result
+      // Drop the cached promise when this connection becomes unusable so
+      // subsequent openIdb() calls grab a fresh connection. Two cases:
+      //   - versionchange: another tab opened the db at a higher version
+      //     and is asking us to step out of the way.
+      //   - close: the browser tore the connection down (Safari does this
+      //     aggressively when a tab is backgrounded for a while).
+      db.onversionchange = () => {
+        db.close()
+        dbPromise = null
+      }
+      db.onclose = () => {
+        dbPromise = null
+      }
+      resolve(db)
+    }
     req.onerror = () => reject(req.error)
+    req.onblocked = () => reject(new Error('IDB open blocked by another tab.'))
   })
+}
+
+export function openIdb(): Promise<IDBDatabase> {
+  if (!dbPromise) dbPromise = openConnection()
   return dbPromise
+}
+
+// Wraps an IDB transaction with one-shot retry on the "connection is
+// closing" InvalidStateError. iOS Safari (and occasionally desktop Safari)
+// reports this on the very first transaction immediately after the
+// onupgradeneeded path on a brand-new database — the connection settles
+// and works on retry. Without this wrapper the user saw "Sign-in failed:
+// InvalidStateError" on first load and had to reload to recover.
+export async function withIdb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  let attempts = 0
+  while (true) {
+    try {
+      const db = await openIdb()
+      return await fn(db)
+    } catch (err) {
+      const isClosing =
+        err instanceof DOMException &&
+        (err.name === 'InvalidStateError' ||
+          (err.message ?? '').includes('closing'))
+      if (isClosing && attempts === 0) {
+        attempts++
+        // Force a fresh connection on the next openIdb() — the previous
+        // one is unusable. Tiny back-off lets Safari finish whatever
+        // bookkeeping it was doing post-upgrade.
+        dbPromise = null
+        await new Promise((r) => setTimeout(r, 50))
+        continue
+      }
+      throw err
+    }
+  }
 }

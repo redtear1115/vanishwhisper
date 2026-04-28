@@ -3,7 +3,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { ref, type Ref } from 'vue'
 import { bytesToBase64 } from './codec'
 import { auth, db } from './firebase'
-import { openIdb } from './idb'
+import { withIdb } from './idb'
 
 const IDB_STORE = 'identity'
 const IDB_KEY = 'keypair'
@@ -108,24 +108,31 @@ async function ensureUsersDoc(uid: string, publicKeyBase64: string): Promise<voi
 }
 
 // ----- IndexedDB minimal helpers (DB schema lives in src/idb.ts) -----
+// All transactions go through withIdb() so the iOS Safari "connection is
+// closing" quirk on the first post-upgrade transaction self-heals via
+// retry instead of bubbling up as a sign-in failure.
 
 async function idbGet(): Promise<CryptoKeyPair | null> {
-  const idb = await openIdb()
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction(IDB_STORE, 'readonly')
-    const req = tx.objectStore(IDB_STORE).get(IDB_KEY)
-    req.onsuccess = () => resolve((req.result as CryptoKeyPair | undefined) ?? null)
-    req.onerror = () => reject(req.error)
-  })
+  return withIdb(
+    (idb) =>
+      new Promise((resolve, reject) => {
+        const tx = idb.transaction(IDB_STORE, 'readonly')
+        const req = tx.objectStore(IDB_STORE).get(IDB_KEY)
+        req.onsuccess = () => resolve((req.result as CryptoKeyPair | undefined) ?? null)
+        req.onerror = () => reject(req.error)
+      }),
+  )
 }
 
 async function idbPut(pair: CryptoKeyPair): Promise<void> {
-  const idb = await openIdb()
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction(IDB_STORE, 'readwrite')
-    tx.objectStore(IDB_STORE).put(pair, IDB_KEY)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
+  return withIdb(
+    (idb) =>
+      new Promise((resolve, reject) => {
+        const tx = idb.transaction(IDB_STORE, 'readwrite')
+        tx.objectStore(IDB_STORE).put(pair, IDB_KEY)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      }),
+  )
 }
 

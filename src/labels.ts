@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { openIdb } from './idb'
+import { withIdb } from './idb'
 
 // Per-session display labels — local-only. Both fields are optional so
 // callers can rename one without clearing the other. Names never reach
@@ -40,20 +40,23 @@ export async function setLabel(sessionId: string, label: SessionLabel): Promise<
   if (sn) cleaned.sessionName = sn
   if (on) cleaned.otherName = on
 
-  const db = await openIdb()
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite')
-    if (Object.keys(cleaned).length === 0) {
-      // Both fields blank — drop the row entirely so the UI falls back to
-      // UID-derived defaults rather than carrying around an empty record.
-      tx.objectStore(IDB_STORE).delete(sessionId)
-    } else {
-      const row: LabelRow = { sessionId, ...cleaned }
-      tx.objectStore(IDB_STORE).put(row)
-    }
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
+  await withIdb(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite')
+        if (Object.keys(cleaned).length === 0) {
+          // Both fields blank — drop the row entirely so the UI falls
+          // back to UID-derived defaults rather than carrying around an
+          // empty record.
+          tx.objectStore(IDB_STORE).delete(sessionId)
+        } else {
+          const row: LabelRow = { sessionId, ...cleaned }
+          tx.objectStore(IDB_STORE).put(row)
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      }),
+  )
 
   // Reassign Map so Vue sees the change — `set`/`delete` on a reactive Map
   // works in Vue 3 but reassignment is the most defensive across Vue versions
@@ -65,13 +68,15 @@ export async function setLabel(sessionId: string, label: SessionLabel): Promise<
 }
 
 async function init(): Promise<void> {
-  const db = await openIdb()
-  const rows = await new Promise<LabelRow[]>((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly')
-    const req = tx.objectStore(IDB_STORE).getAll()
-    req.onsuccess = () => resolve(req.result as LabelRow[])
-    req.onerror = () => reject(req.error)
-  })
+  const rows = await withIdb(
+    (db) =>
+      new Promise<LabelRow[]>((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readonly')
+        const req = tx.objectStore(IDB_STORE).getAll()
+        req.onsuccess = () => resolve(req.result as LabelRow[])
+        req.onerror = () => reject(req.error)
+      }),
+  )
   const map = new Map<string, SessionLabel>()
   for (const row of rows) {
     const { sessionId, ...rest } = row
