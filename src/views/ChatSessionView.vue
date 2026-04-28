@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getIdentity } from '../identity'
-import { sessionDisplay, setLabel, useLabels } from '../labels'
+import { markVisited, sessionDisplay, setLabel, setSessionState, useLabels } from '../labels'
 import {
   deleteMessage,
   markDeleted,
@@ -210,6 +210,10 @@ onMounted(async () => {
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('keydown', onDocumentKeydown)
+  // Mark this chat as "seen up to now" so the home unread dot extinguishes
+  // for any messages the user is about to ack-read in this view. Mirror
+  // call on unmount picks up anything received during the visit.
+  void markVisited(props.id)
 })
 
 onUnmounted(() => {
@@ -223,6 +227,9 @@ onUnmounted(() => {
   // Defensive: if the user navigates away with the lightbox still open,
   // restore the body scroll lock we set in openLightbox.
   document.body.style.overflow = ''
+  // Persist a fresh lastSeenAt covering the whole visit — anything that
+  // arrived while the user was reading is now considered seen.
+  void markVisited(props.id)
 })
 
 // When either side's vanish window updates, blow away the progress-line
@@ -550,6 +557,25 @@ async function onMenuRequestDelete(): Promise<void> {
   await onRequestDelete()
 }
 
+// Pin / Archive toggles. Each is a 3-state toggle:
+//   default → action sets state to target
+//   target  → action clears state back to default
+//   other   → action switches to target (pin and archive are exclusive)
+const sessionState = computed(
+  () => labels.value.get(props.id)?.state ?? 'default',
+)
+
+async function toggleSessionState(target: 'pinned' | 'archived'): Promise<void> {
+  menuOpen.value = false
+  error.value = null
+  try {
+    const next = sessionState.value === target ? undefined : target
+    await setSessionState(props.id, next)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function onAgreeDelete(): Promise<void> {
   error.value = null
   deleting.value = true
@@ -587,6 +613,16 @@ async function onAgreeDelete(): Promise<void> {
 
       <div v-if="menuOpen" class="header-menu" @click.stop>
         <button type="button" class="header-menu-item" @click="onMenuRename">Rename</button>
+        <button
+          type="button"
+          class="header-menu-item"
+          @click="toggleSessionState('pinned')"
+        >{{ sessionState === 'pinned' ? 'Unpin' : 'Pin to top' }}</button>
+        <button
+          type="button"
+          class="header-menu-item"
+          @click="toggleSessionState('archived')"
+        >{{ sessionState === 'archived' ? 'Unarchive' : 'Archive' }}</button>
         <button
           v-if="deleteRequestState === 'none'"
           type="button"

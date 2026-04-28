@@ -1,13 +1,22 @@
 import { ref, type Ref } from 'vue'
 import { withIdb } from './idb'
 
-// Per-session display labels — local-only. Both fields are optional so
-// callers can rename one without clearing the other. Names never reach
-// Firestore: they live exclusively in this user's IndexedDB, which keeps
-// the no-PII-on-the-server rule intact (see CLAUDE.md "Auth & key management").
+// Per-session local state. Local-only: nothing here ever reaches Firestore.
+// Carries both user-set labels (sessionName, otherName) and system bookkeeping
+// (state for pin/archive, lastSeenAt for the unread indicator) — single
+// IndexedDB row keyed by sessionId so we don't fan out into multiple stores.
 export interface SessionLabel {
   sessionName?: string
   otherName?: string
+  // 'pinned' floats to the top of the home list with a ★ marker;
+  // 'archived' is hidden from the default home list (visible in the
+  // collapsible Archived section, OR auto-surfaced if the OTHER party
+  // has a pending mutual-delete request — see HomeView).
+  state?: 'pinned' | 'archived'
+  // Local epoch ms timestamp written on chat mount/unmount. Combined with
+  // session.LastMessageBy + UpdatedAt this drives the home unread dot:
+  // unread = LastMessageBy is the OTHER party AND UpdatedAt > lastSeenAt.
+  lastSeenAt?: number
 }
 
 interface LabelRow extends SessionLabel {
@@ -30,41 +39,97 @@ export function getLabel(sessionId: string): SessionLabel | undefined {
   return labelsRef.value.get(sessionId)
 }
 
-export async function setLabel(sessionId: string, label: SessionLabel): Promise<void> {
+// Public APIs are split by concern even though they share one IDB store —
+// setLabel for user names, setSessionState for pin/archive, markVisited for
+// the unread bookkeeping. Each one is a partial-merge update that preserves
+// the other fields, so renaming a session doesn't blow away its pinned
+// state and so on.
+
+export async function setLabel(
+  sessionId: string,
+  label: { sessionName?: string; otherName?: string },
+): Promise<void> {
+  await mergePrefs(sessionId, (current) => {
+    const next: SessionLabel = { ...current }
+    const sn = label.sessionName?.trim()
+    const on = label.otherName?.trim()
+    if (sn) next.sessionName = sn
+    else delete next.sessionName
+    if (on) next.otherName = on
+    else delete next.otherName
+    return next
+  })
+}
+
+export async function setSessionState(
+  sessionId: string,
+  state: 'pinned' | 'archived' | undefined,
+): Promise<void> {
+  await mergePrefs(sessionId, (current) => {
+    const next: SessionLabel = { ...current }
+    if (state) next.state = state
+    else delete next.state
+    return next
+  })
+}
+
+export async function markVisited(sessionId: string): Promise<void> {
+  await mergePrefs(sessionId, (current) => ({ ...current, lastSeenAt: Date.now() }))
+}
+
+// Read-merge-write inside one IDB transaction so concurrent calls for the
+// same session don't lose updates (mount fires markVisited at the same
+// moment a Pin click fires setSessionState — both should land). Drops the
+// row entirely when the merged record has no meaningful fields, so unused
+// sessions don't accumulate empty IDB rows.
+async function mergePrefs(
+  sessionId: string,
+  merge: (current: SessionLabel) => SessionLabel,
+): Promise<void> {
   if (!initPromise) initPromise = init()
   await initPromise
-
-  const cleaned: SessionLabel = {}
-  const sn = label.sessionName?.trim()
-  const on = label.otherName?.trim()
-  if (sn) cleaned.sessionName = sn
-  if (on) cleaned.otherName = on
 
   await withIdb(
     (db) =>
       new Promise<void>((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite')
-        if (Object.keys(cleaned).length === 0) {
-          // Both fields blank — drop the row entirely so the UI falls
-          // back to UID-derived defaults rather than carrying around an
-          // empty record.
-          tx.objectStore(IDB_STORE).delete(sessionId)
-        } else {
-          const row: LabelRow = { sessionId, ...cleaned }
-          tx.objectStore(IDB_STORE).put(row)
+        const store = tx.objectStore(IDB_STORE)
+        const getReq = store.get(sessionId)
+        getReq.onsuccess = () => {
+          const existing = getReq.result as LabelRow | undefined
+          const { sessionId: _ignored, ...currentFields } = existing ?? {
+            sessionId,
+          }
+          void _ignored
+          const merged = merge(currentFields)
+          if (isEmpty(merged)) {
+            store.delete(sessionId)
+          } else {
+            store.put({ sessionId, ...merged })
+          }
         }
+        getReq.onerror = () => reject(getReq.error)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       }),
   )
 
-  // Reassign Map so Vue sees the change — `set`/`delete` on a reactive Map
-  // works in Vue 3 but reassignment is the most defensive across Vue versions
-  // and avoids a class of edge cases with computed dependencies.
+  // Reassign the reactive Map so Vue diffs see the change.
   const next = new Map(labelsRef.value)
-  if (Object.keys(cleaned).length === 0) next.delete(sessionId)
-  else next.set(sessionId, cleaned)
+  const current = next.get(sessionId) ?? {}
+  const merged = merge(current)
+  if (isEmpty(merged)) next.delete(sessionId)
+  else next.set(sessionId, merged)
   labelsRef.value = next
+}
+
+function isEmpty(label: SessionLabel): boolean {
+  return (
+    !label.sessionName &&
+    !label.otherName &&
+    !label.state &&
+    label.lastSeenAt === undefined
+  )
 }
 
 async function init(): Promise<void> {

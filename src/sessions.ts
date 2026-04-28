@@ -115,6 +115,12 @@ export interface ChatSessionRow {
   // (or null when no request is pending). Drives the home-list "delete pending"
   // hint and, in the chat view, the agree/reject banner.
   deleteRequestedBy: string | null
+  // UID of whoever sent the most recent message in the session. Combined with
+  // a local `lastSeenAt` mark, drives the home unread dot — if the latest
+  // message is from the OTHER party AND it's newer than my last visit to the
+  // chat, the dot lights up. Null on legacy sessions that never had a send
+  // since this field was introduced (no dot shown — graceful degradation).
+  lastMessageBy: string | null
 }
 
 export interface SessionMeta {
@@ -256,6 +262,7 @@ function toRow(snap: QueryDocumentSnapshot<DocumentData>, myUid: string): ChatSe
     createdAt: (d.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
     updatedAt: (d.UpdatedAt as Timestamp | undefined)?.toDate() ?? null,
     deleteRequestedBy: (d.DeleteRequestedBy as string | undefined) ?? null,
+    lastMessageBy: (d.LastMessageBy as string | undefined) ?? null,
   }
 }
 

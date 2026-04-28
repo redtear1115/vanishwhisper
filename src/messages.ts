@@ -82,6 +82,7 @@ export async function sendMessage(
   })
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
+    LastMessageBy: me.uid,
   })
   await batch.commit()
 }
@@ -290,6 +291,7 @@ export async function sendImageMessage(
   })
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
+    LastMessageBy: me.uid,
   })
   await batch.commit()
 }
@@ -348,6 +350,7 @@ export async function sendStickerMessage(
   })
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
+    LastMessageBy: me.uid,
   })
   await batch.commit()
 }

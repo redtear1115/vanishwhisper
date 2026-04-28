@@ -1,12 +1,64 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useIdentity } from '../identity'
 import { avatarInitials, avatarScheme, sessionDisplay, useLabels } from '../labels'
-import { useSessions } from '../sessions'
+import { useSessions, type ChatSessionRow } from '../sessions'
 import AppLogo from '../components/AppLogo.vue'
 
 const { identity } = useIdentity()
 const { sessions, error: sessionsError } = useSessions()
 const { labels } = useLabels()
+
+// Local UI state for the collapsible Archived section. Default collapsed —
+// archive is "out of sight" by intent.
+const archivedExpanded = ref(false)
+
+// State + override classifier for each session. "Surfaced" archived means an
+// archived session that we forcibly bubble back to the default list because
+// the OTHER party requested mutual deletion — without surfacing, the user
+// would never see the request and the session could never get deleted.
+function stateOf(s: ChatSessionRow): 'pinned' | 'archived' | 'default' {
+  return labels.value.get(s.id)?.state ?? 'default'
+}
+function isOtherDeletePending(s: ChatSessionRow): boolean {
+  return Boolean(s.deleteRequestedBy && s.deleteRequestedBy !== identity.value?.uid)
+}
+
+// Three buckets, each sorted by recent activity (sessions are already
+// ordered by updatedAt desc upstream).
+const pinnedSessions = computed(() =>
+  sessions.value.filter((s) => stateOf(s) === 'pinned'),
+)
+const defaultSessions = computed(() =>
+  sessions.value.filter((s) => {
+    const st = stateOf(s)
+    if (st === 'pinned') return false
+    if (st === 'archived') return isOtherDeletePending(s) // surface override
+    return true
+  }),
+)
+const archivedSessions = computed(() =>
+  sessions.value.filter((s) => {
+    if (stateOf(s) !== 'archived') return false
+    // Don't double-show: if it's surfaced in default, drop from this list.
+    return !isOtherDeletePending(s)
+  }),
+)
+
+// Unread heuristic. Server tells us who sent the most recent message
+// (LastMessageBy). We track when the user last visited each chat in
+// IndexedDB (lastSeenAt). Dot lights when:
+//   - latest message exists AND
+//   - it was sent by the OTHER party AND
+//   - it landed AFTER my last visit (with a 2 s clock-skew buffer between
+//     server and local clocks)
+function hasUnread(s: ChatSessionRow): boolean {
+  if (!identity.value) return false
+  if (!s.lastMessageBy || s.lastMessageBy === identity.value.uid) return false
+  const lastSeen = labels.value.get(s.id)?.lastSeenAt ?? 0
+  const updated = s.updatedAt?.getTime() ?? 0
+  return updated > lastSeen + 2000
+}
 
 function relativeTime(d: Date | null): string {
   if (!d) return ''
@@ -60,8 +112,6 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
         New encrypted session
       </router-link>
 
-      <div class="section-label">Your sessions</div>
-
       <p v-if="sessionsError" class="vw-text-danger" style="font-size:13px;">
         {{ String(sessionsError) }}
       </p>
@@ -69,41 +119,117 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
         No sessions yet — share your UID to start.
       </p>
 
-      <div v-else class="session-list">
-        <router-link
-          v-for="s in sessions"
-          :key="s.id"
-          :to="{ name: 'session', params: { id: s.id } }"
-          class="session-item"
-        >
-          <div
-            class="session-avatar"
-            :class="`scheme-${avatarSchemeFor(s.otherParticipant)}`"
+      <template v-else>
+        <!-- Pinned section — only when at least one session is pinned. Same
+             row markup as the default list with a ★ marker prefix. -->
+        <template v-if="pinnedSessions.length > 0">
+          <div class="section-label">★ Pinned</div>
+          <div class="session-list">
+            <router-link
+              v-for="s in pinnedSessions"
+              :key="s.id"
+              :to="{ name: 'session', params: { id: s.id } }"
+              class="session-item"
+            >
+              <div
+                class="session-avatar"
+                :class="`scheme-${avatarSchemeFor(s.otherParticipant)}`"
+              >{{ avatarLabel(s.id, s.otherParticipant) }}</div>
+              <div class="session-info">
+                <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
+                <span
+                  v-if="display(s.id, s.otherParticipant).secondary"
+                  class="session-meta"
+                >{{ display(s.id, s.otherParticipant).secondary }}</span>
+              </div>
+              <div class="session-trailing">
+                <span v-if="hasUnread(s)" class="unread-dot" title="Unread messages" />
+                <span
+                  v-if="s.deleteRequestedBy"
+                  class="delete-pending-pill"
+                  :title="s.deleteRequestedBy === identity?.uid
+                    ? 'Waiting for the other party to agree to delete'
+                    : 'The other party wants to delete — open to respond'"
+                >{{ s.deleteRequestedBy === identity?.uid ? 'pending…' : 'delete?' }}</span>
+                <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
+              </div>
+            </router-link>
+          </div>
+        </template>
+
+        <!-- Default section -->
+        <div class="section-label">Your sessions</div>
+        <p v-if="defaultSessions.length === 0" class="empty-hint">
+          {{ archivedSessions.length > 0
+            ? 'Nothing here — your other sessions are archived below.'
+            : 'No active sessions.' }}
+        </p>
+        <div v-else class="session-list">
+          <router-link
+            v-for="s in defaultSessions"
+            :key="s.id"
+            :to="{ name: 'session', params: { id: s.id } }"
+            class="session-item"
           >
-            {{ avatarLabel(s.id, s.otherParticipant) }}
+            <div
+              class="session-avatar"
+              :class="`scheme-${avatarSchemeFor(s.otherParticipant)}`"
+            >{{ avatarLabel(s.id, s.otherParticipant) }}</div>
+            <div class="session-info">
+              <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
+              <span
+                v-if="display(s.id, s.otherParticipant).secondary"
+                class="session-meta"
+              >{{ display(s.id, s.otherParticipant).secondary }}</span>
+            </div>
+            <div class="session-trailing">
+              <span v-if="hasUnread(s)" class="unread-dot" title="Unread messages" />
+              <span
+                v-if="s.deleteRequestedBy"
+                class="delete-pending-pill"
+                :title="s.deleteRequestedBy === identity?.uid
+                  ? 'Waiting for the other party to agree to delete'
+                  : 'The other party wants to delete — open to respond'"
+              >{{ s.deleteRequestedBy === identity?.uid ? 'pending…' : 'delete?' }}</span>
+              <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
+            </div>
+          </router-link>
+        </div>
+
+        <!-- Archived section — collapsible. Sessions auto-surface back to
+             the default list when the OTHER party has a pending delete
+             request, so this list is only the "true archived" cohort. -->
+        <template v-if="archivedSessions.length > 0">
+          <button
+            type="button"
+            class="archive-toggle"
+            @click="archivedExpanded = !archivedExpanded"
+          >{{ archivedExpanded ? '▾' : '▸' }} Archived ({{ archivedSessions.length }})</button>
+          <div v-if="archivedExpanded" class="session-list archived-list">
+            <router-link
+              v-for="s in archivedSessions"
+              :key="s.id"
+              :to="{ name: 'session', params: { id: s.id } }"
+              class="session-item"
+            >
+              <div
+                class="session-avatar"
+                :class="`scheme-${avatarSchemeFor(s.otherParticipant)}`"
+              >{{ avatarLabel(s.id, s.otherParticipant) }}</div>
+              <div class="session-info">
+                <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
+                <span
+                  v-if="display(s.id, s.otherParticipant).secondary"
+                  class="session-meta"
+                >{{ display(s.id, s.otherParticipant).secondary }}</span>
+              </div>
+              <div class="session-trailing">
+                <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
+              </div>
+            </router-link>
           </div>
-          <div class="session-info">
-            <span class="session-id">{{ display(s.id, s.otherParticipant).primary }}</span>
-            <!-- Subtitle only appears when sessionName is set (display.secondary
-                 carries "with X" then). Unlabelled rows collapse to a single
-                 line so the whole list reads cleanly. -->
-            <span
-              v-if="display(s.id, s.otherParticipant).secondary"
-              class="session-meta"
-            >{{ display(s.id, s.otherParticipant).secondary }}</span>
-          </div>
-          <div class="session-trailing">
-            <span
-              v-if="s.deleteRequestedBy"
-              class="delete-pending-pill"
-              :title="s.deleteRequestedBy === identity?.uid
-                ? 'Waiting for the other party to agree to delete'
-                : 'The other party wants to delete — open to respond'"
-            >{{ s.deleteRequestedBy === identity?.uid ? 'pending…' : 'delete?' }}</span>
-            <span class="session-time">{{ relativeTime(s.updatedAt) }}</span>
-          </div>
-        </router-link>
-      </div>
+        </template>
+      </template>
     </div>
   </div>
 </template>
@@ -265,6 +391,41 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   gap: 4px;
   flex-shrink: 0;
 }
+
+/* Mint dot — "you have unread messages from the other party here". Drives
+   off LastMessageBy + the local lastSeenAt mark; no count, just a presence
+   indicator (in line with the app's vanishing-message vibe — counts get
+   stale fast). */
+.unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vw-green-strong);
+  flex-shrink: 0;
+}
+
+/* Collapsible Archived section trigger — minimal text button, no border,
+   sits flush left under the default list. */
+.archive-toggle {
+  background: none;
+  border: none;
+  padding: 8px 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vw-text3);
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s;
+}
+.archive-toggle:hover { color: var(--vw-text2); }
+
+/* Archived rows visually softer so they read as "out of focus". */
+.archived-list .session-item {
+  opacity: 0.7;
+}
+.archived-list .session-item:hover { opacity: 1; }
 
 .session-time {
   font-size: 11px;

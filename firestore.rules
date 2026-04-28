@@ -58,8 +58,15 @@ service cloud.firestore {
                     && (resource.data.Participant1 == request.auth.uid
                         || resource.data.Participant2 == request.auth.uid)
                     && (
-                      // (a) bump UpdatedAt on new message
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt'])
+                      // (a) bump UpdatedAt + record sender on new message.
+                      // LastMessageBy must equal the requester's uid so a
+                      // participant can't impersonate the other as the
+                      // last sender (which would mess up the home unread dot
+                      // on the other side).
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UpdatedAt', 'LastMessageBy'])
+                        && request.resource.data.LastMessageBy == request.auth.uid
+                      )
                       ||
                       // (b) request mutual delete
                       (
