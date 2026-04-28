@@ -9,10 +9,12 @@ import {
   markRead,
   sendImageMessage,
   sendMessage,
+  sendStickerMessage,
   subscribeMessages,
   toggleReaction,
   type ChatMessageRow,
 } from '../messages'
+import { STICKERS, stickerUrl } from '../stickers'
 import {
   agreeDeleteSession,
   cancelDeleteSession,
@@ -97,6 +99,11 @@ const savingLabels = ref(false)
 // Header overflow menu (⋯). Open via the explicit button; close on
 // item-click, click-outside (document handler), or Esc (keydown handler).
 const menuOpen = ref(false)
+
+// Sticker picker (input bar). Same open/close lifecycle as the menu and
+// reaction picker — toggled by the explicit 😺 button, closed by document
+// click outside / Esc / picking a sticker. Always closes after a send.
+const stickerPickerOpen = ref(false)
 
 // Header display derived from sessionDisplay(). See its doc comment for the
 // four-state matrix. Pre-load placeholder uses sessionName if available
@@ -296,6 +303,19 @@ function openFilePicker(): void {
   fileInputRef.value?.click()
 }
 
+async function onPickSticker(stickerKey: string): Promise<void> {
+  if (!opened.value) return
+  // Close picker before the async send so the click feedback is immediate.
+  stickerPickerOpen.value = false
+  error.value = null
+  try {
+    await sendStickerMessage(props.id, stickerKey)
+    stickToBottom = true
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function onFileSelected(e: Event): Promise<void> {
   const target = e.target as HTMLInputElement
   const file = target.files?.[0]
@@ -446,15 +466,18 @@ async function onReactAndClose(
 }
 
 // Document-level click handler closes any open picker AND the header
-// overflow menu. Their open triggers and inner buttons all use @click.stop
-// so clicks INSIDE never reach this — anything that does is by definition
-// outside.
+// overflow menu AND the sticker picker. Their open triggers and inner
+// buttons all use @click.stop so clicks INSIDE never reach this — anything
+// that does is by definition outside.
 function onDocumentClick(): void {
   if (pickerOpenFor.value !== null) {
     pickerOpenFor.value = null
   }
   if (menuOpen.value) {
     menuOpen.value = false
+  }
+  if (stickerPickerOpen.value) {
+    stickerPickerOpen.value = false
   }
 }
 
@@ -475,6 +498,7 @@ function onDocumentKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return
   if (lightboxUrl.value !== null) closeLightbox()
   if (menuOpen.value) menuOpen.value = false
+  if (stickerPickerOpen.value) stickerPickerOpen.value = false
 }
 
 async function onDelete(messageId: string): Promise<void> {
@@ -663,15 +687,27 @@ async function onAgreeDelete(): Promise<void> {
       >
         <!-- Bubble (per-message). Unsend lives inside the bubble as a hover
              affordance so even mid-group messages can be unsent — the shared
-             meta row below carries no per-message controls. Image attachments
-             render before any text caption (currently no caption UI, so it's
-             one or the other). -->
+             meta row below carries no per-message controls. Sticker / image /
+             text are mutually exclusive in the UI (the input bar offers them
+             via separate paths), so v-else-if down the chain. -->
         <div
           class="msg-bubble"
-          :class="[m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them', { 'has-image': m.attachment }]"
+          :class="[
+            m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them',
+            { 'has-image': m.attachment, 'has-sticker': m.sticker },
+          ]"
         >
+          <template v-if="m.sticker">
+            <img
+              v-if="stickerUrl(m.sticker)"
+              :src="stickerUrl(m.sticker)!"
+              class="msg-sticker"
+              alt=""
+            />
+            <span v-else class="decrypt-err">[unknown sticker: {{ m.sticker }}]</span>
+          </template>
           <img
-            v-if="m.attachment?.blobUrl"
+            v-else-if="m.attachment?.blobUrl"
             :src="m.attachment.blobUrl"
             :width="m.attachment.width"
             :height="m.attachment.height"
@@ -764,6 +800,13 @@ async function onAgreeDelete(): Promise<void> {
         class="file-input-hidden"
         @change="onFileSelected"
       />
+      <button
+        type="button"
+        class="attach-btn"
+        :disabled="sending || sendingImage"
+        title="Send a sticker"
+        @click.stop="stickerPickerOpen = !stickerPickerOpen"
+      >😺</button>
       <input
         ref="draftInputRef"
         v-model="draft"
@@ -779,6 +822,22 @@ async function onAgreeDelete(): Promise<void> {
       >
         <span class="send-icon" />
       </button>
+
+      <!-- Sticker picker — floats above the input bar. .stop on inner
+           clicks so the document-click-to-close handler doesn't fire when
+           the user picks something inside. -->
+      <div v-if="stickerPickerOpen" class="sticker-picker" @click.stop>
+        <button
+          v-for="s in STICKERS"
+          :key="s.key"
+          type="button"
+          class="sticker-picker-item"
+          :title="s.label"
+          @click="onPickSticker(s.key)"
+        >
+          <img :src="s.url" :alt="s.label" />
+        </button>
+      </div>
     </form>
   </div>
 </template>
@@ -1209,6 +1268,8 @@ async function onAgreeDelete(): Promise<void> {
   border-top: 0.5px solid var(--vw-border);
   background: var(--vw-surface);
   flex-shrink: 0;
+  /* Anchor for the sticker picker's absolute positioning. */
+  position: relative;
 }
 
 .send-icon {
@@ -1249,6 +1310,50 @@ async function onAgreeDelete(): Promise<void> {
   display: none;
 }
 
+/* ── Sticker picker (floating panel above the input bar) ──
+   `position: absolute` anchored to .input-bar (which gets position:relative
+   below). Width matches the input area minus a little gutter so it visually
+   "belongs" to the input row. Three columns × three rows for the bundled
+   nine stickers. */
+.sticker-picker {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  background: var(--vw-surface2);
+  border: 0.5px solid var(--vw-border);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  z-index: 50;
+  box-shadow: 0 -4px 16px color-mix(in srgb, var(--vw-bg) 80%, transparent);
+}
+
+.sticker-picker-item {
+  background: none;
+  border: none;
+  padding: 4px;
+  border-radius: 8px;
+  aspect-ratio: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+.sticker-picker-item:hover {
+  background: var(--vw-surface);
+  transform: scale(1.05);
+}
+.sticker-picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
 /* ── Image attachments inside bubbles ── */
 .msg-image {
   display: block;
@@ -1270,6 +1375,21 @@ async function onAgreeDelete(): Promise<void> {
 }
 .msg-bubble.has-image .msg-image {
   border-radius: 12px;
+}
+
+/* ── Stickers inside bubbles ── */
+.msg-sticker {
+  display: block;
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+}
+/* Sticker-only bubbles: same chrome-strip treatment as has-image so the
+   transparent PNG floats free instead of sitting on a coloured rectangle. */
+.msg-bubble.has-sticker {
+  padding: 0;
+  background: transparent;
+  border: none;
 }
 
 /* ── Lightbox ── */

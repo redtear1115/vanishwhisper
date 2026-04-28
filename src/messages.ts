@@ -34,12 +34,17 @@ export interface ChatMessageRow {
   id: string
   senderUid: string
   fromMe: boolean
-  text: string | null // null when decryption fails; '' when message is image-only
+  text: string | null // null when decryption fails; '' when message has no text body
   createdAt: Date | null
   readAt: Date | null
   deletedAt: Date | null
   reactions: Record<string, string[]> // emoji -> uids; plaintext per Phase 2 design
   attachment: AttachmentInfo | null
+  // Sticker key from the bundled set (see src/stickers.ts). Plaintext for
+  // the same reason as reactions — drawn from a public 9-item list, no
+  // confidential payload. Mutually exclusive with text/attachment in the UI
+  // (sticker-only messages skip Context entirely).
+  sticker: string | null
 }
 
 // Image attachment caps, all client-side enforced. Firestore docs are limited
@@ -151,6 +156,7 @@ export function subscribeMessages(
             deletedAt: (data.DeletedAt as Timestamp | undefined)?.toDate() ?? null,
             reactions: (data.Reactions as Record<string, string[]> | undefined) ?? {},
             attachment,
+            sticker: (data.Sticker as string | undefined) ?? null,
           })
         }),
       )
@@ -320,6 +326,30 @@ async function compressImage(file: File): Promise<{
     }
   }
   throw new Error('Image too detailed to compress under 750 KB. Try a smaller image.')
+}
+
+// ----- Stickers (Phase 2 step 4) -----
+
+export async function sendStickerMessage(
+  sessionId: string,
+  stickerKey: string,
+): Promise<void> {
+  const me = getIdentity()
+  // Plaintext like reactions — sticker keys are drawn from a public 9-item
+  // list bundled with the app, so encryption adds no confidentiality. No
+  // session key required for this path.
+  const batch = writeBatch(db)
+  batch.set(doc(collection(db, 'ChatMessages')), {
+    SessionID: sessionId,
+    UserID: me.uid,
+    Sticker: stickerKey,
+    CreatedAt: serverTimestamp(),
+    UpdatedAt: serverTimestamp(),
+  })
+  batch.update(doc(db, 'ChatSessions', sessionId), {
+    UpdatedAt: serverTimestamp(),
+  })
+  await batch.commit()
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { useIdentity } from './identity'
 import AppLogo from './components/AppLogo.vue'
+// Painted mascot for the splash. Vite hashes the URL for cache-busting.
+// Topbars throughout the app keep using AppLogo (the inline SVG) — at
+// 24-36px sizes the SVG looks crisper than scaling down a 1024 raster.
+import mascotUrl from './assets/whisp-mascot.png'
 
 const { identity, error } = useIdentity()
 </script>
@@ -12,7 +16,7 @@ const { identity, error } = useIdentity()
       <p class="vw-text-danger" style="font-size:13px;">Sign-in failed: {{ String(error) }}</p>
     </div>
     <div v-else-if="!identity" class="app-state">
-      <AppLogo size="lg" />
+      <img :src="mascotUrl" alt="VanishWhisper" class="splash-mascot" />
       <div class="loading-dots">
         <span /><span /><span />
       </div>
@@ -46,6 +50,15 @@ const { identity, error } = useIdentity()
   align-items: center;
   justify-content: center;
   gap: 20px;
+}
+
+.splash-mascot {
+  width: 220px;
+  height: auto;
+  display: block;
+  /* Subtle floating shadow under the ghost so it doesn't look pasted onto
+     the bg. Mint green to echo the brand secondary, very low opacity. */
+  filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--vw-purple-mid) 40%, transparent));
 }
 
 .loading-dots {
