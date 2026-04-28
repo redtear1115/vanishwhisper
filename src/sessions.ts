@@ -26,6 +26,20 @@ export async function createSession(inviteeUid: string): Promise<string> {
   const me = getIdentity()
   if (inviteeUid === me.uid) throw new Error('Cannot invite yourself.')
 
+  // Single session per pair (silent dedup). Mirrors standard chat-app UX —
+  // WhatsApp / Signal / iMessage / Telegram / Slack DM all keep exactly one
+  // 1-on-1 conversation per pair. If we already share a session with this
+  // user (either direction of who-invited-whom), return its id so the caller
+  // routes into the existing chat instead of spawning a duplicate. The user
+  // experiences "this opened our chat" rather than "this created a new chat".
+  // To start truly fresh, both sides go through the mutual-delete flow
+  // (which is the consensual way to retire a session) and then re-invite.
+  // Tiny race window: if A and B both call createSession() with each other
+  // concurrently before either write lands, both findExistingSession calls
+  // return null and we end up with two docs. Mutual delete cleans this up.
+  const existing = await findExistingSession(me.uid, inviteeUid)
+  if (existing) return existing
+
   const inviteeSnap = await getDoc(doc(db, 'Users', inviteeUid))
   if (!inviteeSnap.exists()) throw new Error('Invitee UID not found.')
   const inviteePublicKeyBase64 = inviteeSnap.get('PublicKey') as string | undefined
@@ -243,6 +257,34 @@ function toRow(snap: QueryDocumentSnapshot<DocumentData>, myUid: string): ChatSe
     updatedAt: (d.UpdatedAt as Timestamp | undefined)?.toDate() ?? null,
     deleteRequestedBy: (d.DeleteRequestedBy as string | undefined) ?? null,
   }
+}
+
+// Two equality-only queries (one for each "who is Participant1" direction)
+// merged client-side. Firestore serves equality-only compound queries via
+// single-field auto-indexes — no composite index required. Returns the
+// first matching session id from either direction, or null if no session
+// exists between the pair.
+async function findExistingSession(
+  myUid: string,
+  otherUid: string,
+): Promise<string | null> {
+  const [aSnap, bSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'ChatSessions'),
+        where('Participant1', '==', myUid),
+        where('Participant2', '==', otherUid),
+      ),
+    ),
+    getDocs(
+      query(
+        collection(db, 'ChatSessions'),
+        where('Participant1', '==', otherUid),
+        where('Participant2', '==', myUid),
+      ),
+    ),
+  ])
+  return aSnap.docs[0]?.id ?? bSnap.docs[0]?.id ?? null
 }
 
 async function importRsaPublicKey(spkiBase64: string): Promise<CryptoKey> {
