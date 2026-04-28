@@ -48,9 +48,13 @@ async function shareInviteLink(): Promise<void> {
   // share sheet errors out for any reason except a user cancel.
   if (supportsShare) {
     try {
+      // ONLY pass `url` (and a short `title` for the share-sheet header) —
+      // some receivers (macOS Notes, Messages, certain share targets) paste
+      // `text` AND `url` concatenated as two lines, breaking the click-to-
+      // join experience. Title is typically used as the email subject /
+      // share sheet header and is dropped on plain Copy, so it's safe.
       await navigator.share({
         title: 'VanishWhisper invite',
-        text: 'Encrypted chat invite',
         url,
       })
       return
