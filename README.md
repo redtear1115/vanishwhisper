@@ -157,4 +157,8 @@ firestore.indexes.json       # composite indexes
 
 ## License
 
-No license file is committed yet — the repo is "all rights reserved" by default. If you intend to publish for reuse, add an [MIT](https://choosealicense.com/licenses/mit/) (permissive) or [AGPL-3.0](https://choosealicense.com/licenses/agpl-3.0/) (copyleft) `LICENSE` file before opening the project up.
+[AGPL-3.0-only](LICENSE).
+
+This is a strong copyleft license with a network-use clause: if you fork this project and run a modified version as a public service, you must make the modified source available to the users of that service. Picked deliberately to keep the threat-model claims auditable — anyone hosting a "VanishWhisper-but-with-tracking" can't legally hide the tracking code.
+
+For non-network use, the usual AGPL terms apply: you may use, modify, and redistribute, but derivative works must also be AGPL-3.0.
