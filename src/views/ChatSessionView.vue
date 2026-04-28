@@ -94,6 +94,9 @@ const renaming = ref(false)
 const draftSessionName = ref('')
 const draftOtherName = ref('')
 const savingLabels = ref(false)
+// Header overflow menu (⋯). Open via the explicit button; close on
+// item-click, click-outside (document handler), or Esc (keydown handler).
+const menuOpen = ref(false)
 
 // Two-line header derived from sessionDisplay() — friendly name promotes
 // to the title; the underlying session id (when a name is set) plus the
@@ -442,12 +445,16 @@ async function onReactAndClose(
   await onReact(messageId, emoji, hasMine)
 }
 
-// Document-level click handler closes any open picker. The picker's open
-// trigger and emoji buttons all use @click.stop so clicks INSIDE the picker
-// never reach this — anything that does is by definition outside.
+// Document-level click handler closes any open picker AND the header
+// overflow menu. Their open triggers and inner buttons all use @click.stop
+// so clicks INSIDE never reach this — anything that does is by definition
+// outside.
 function onDocumentClick(): void {
   if (pickerOpenFor.value !== null) {
     pickerOpenFor.value = null
+  }
+  if (menuOpen.value) {
+    menuOpen.value = false
   }
 }
 
@@ -465,9 +472,9 @@ function closeLightbox(): void {
 }
 
 function onDocumentKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && lightboxUrl.value !== null) {
-    closeLightbox()
-  }
+  if (e.key !== 'Escape') return
+  if (lightboxUrl.value !== null) closeLightbox()
+  if (menuOpen.value) menuOpen.value = false
 }
 
 async function onDelete(messageId: string): Promise<void> {
@@ -497,6 +504,19 @@ async function onCancelOrReject(): Promise<void> {
   }
 }
 
+// ⋯ menu actions. Each closes the menu first, then fires the underlying
+// handler — keeps the click feedback immediate and avoids a flicker
+// where the menu sits open during the async operation.
+function onMenuRename(): void {
+  menuOpen.value = false
+  openRenamePanel()
+}
+
+async function onMenuRequestDelete(): Promise<void> {
+  menuOpen.value = false
+  await onRequestDelete()
+}
+
 async function onAgreeDelete(): Promise<void> {
   error.value = null
   deleting.value = true
@@ -515,19 +535,32 @@ async function onAgreeDelete(): Promise<void> {
 
 <template>
   <div class="chat-wrap">
-    <!-- Header -->
+    <!-- Header. Title is non-interactive display. Session-level actions
+         (rename, request delete) live behind the explicit ⋯ menu — which
+         is more discoverable than a hidden click target on the title. -->
     <header class="chat-header">
       <router-link to="/" class="back-btn">←</router-link>
-      <button
-        type="button"
-        class="chat-header-info"
-        :title="renaming ? 'Close rename' : 'Rename session / other party'"
-        @click="renaming ? (renaming = false) : openRenamePanel()"
-      >
+      <div class="chat-header-info">
         <span class="chat-title">{{ headerDisplay.primary }}</span>
         <span v-if="headerDisplay.secondary" class="chat-subtitle">{{ headerDisplay.secondary }}</span>
-      </button>
+      </div>
+      <button
+        type="button"
+        class="header-menu-btn"
+        :title="menuOpen ? 'Close menu' : 'Session menu'"
+        @click.stop="menuOpen = !menuOpen"
+      >⋯</button>
       <span class="vw-badge-e2e">E2E</span>
+
+      <div v-if="menuOpen" class="header-menu" @click.stop>
+        <button type="button" class="header-menu-item" @click="onMenuRename">Rename</button>
+        <button
+          v-if="deleteRequestState === 'none'"
+          type="button"
+          class="header-menu-item danger"
+          @click="onMenuRequestDelete"
+        >Request delete</button>
+      </div>
     </header>
 
     <!-- Rename panel -->
@@ -566,20 +599,6 @@ async function onAgreeDelete(): Promise<void> {
           :disabled="savingLabels"
           @click="renaming = false"
         >Cancel</button>
-      </div>
-
-      <!-- Danger zone: request mutual delete. Hidden once a request is
-           pending — at that point the banner above the messages takes over
-           the workflow. -->
-      <div v-if="deleteRequestState === 'none'" class="rename-danger">
-        <p class="rename-danger-label">Danger zone</p>
-        <button
-          type="button"
-          class="rename-danger-btn"
-          :disabled="savingLabels"
-          @click="onRequestDelete"
-        >Request delete this session</button>
-        <p class="rename-hint">Both parties must agree before the session and all messages are deleted for both sides.</p>
       </div>
     </div>
 
@@ -764,11 +783,13 @@ async function onAgreeDelete(): Promise<void> {
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 12px 16px;
   background: var(--vw-surface);
   border-bottom: 0.5px solid var(--vw-border);
   flex-shrink: 0;
+  /* Anchor for the ⋯ overflow menu's absolute positioning. */
+  position: relative;
 }
 
 .back-btn {
@@ -779,29 +800,81 @@ async function onAgreeDelete(): Promise<void> {
 }
 .back-btn:hover { color: var(--vw-purple-pale); }
 
-/* The header info area is now a <button> so it can open the rename panel —
-   reset native button chrome and keep the same column layout. */
+/* The header info area is now non-interactive display — session-level
+   actions moved behind the explicit ⋯ button next to it for clearer
+   discoverability. */
 .chat-header-info {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  background: none;
-  border: none;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
 }
-.chat-header-info:hover .chat-title { color: var(--vw-purple-pale); }
 
 .chat-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--vw-text);
-  transition: color 0.15s;
+}
+
+/* ── Header overflow menu ── */
+.header-menu-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--vw-text2);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.header-menu-btn:hover {
+  color: var(--vw-purple-pale);
+  background: var(--vw-surface2);
+}
+
+/* Dropdown anchored to the bottom-right of the chat header; absolute
+   inside .chat-header (which is position:relative). z-index above the
+   message list and the rename panel. */
+.header-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 12px;
+  min-width: 180px;
+  background: var(--vw-surface2);
+  border: 0.5px solid var(--vw-border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 100;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--vw-bg) 80%, transparent);
+}
+
+.header-menu-item {
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--vw-text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.header-menu-item:hover { background: var(--vw-surface); }
+.header-menu-item.danger { color: var(--vw-danger); }
+.header-menu-item.danger:hover {
+  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
 }
 
 .chat-subtitle {
@@ -859,40 +932,6 @@ async function onAgreeDelete(): Promise<void> {
 }
 .rename-cancel:hover { color: var(--vw-purple-pale); border-color: var(--vw-purple-mid); }
 .rename-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
-
-/* Danger zone — visually separated by a top border + a danger-tinted
-   button so the destructive option doesn't sit flush with safe edits. */
-.rename-danger {
-  margin-top: 6px;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--vw-border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.rename-danger-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-danger);
-  margin: 0;
-}
-.rename-danger-btn {
-  align-self: flex-start;
-  background: none;
-  border: 0.5px solid color-mix(in srgb, var(--vw-danger) 40%, transparent);
-  border-radius: 8px;
-  padding: 8px 14px;
-  color: var(--vw-danger);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.rename-danger-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vw-danger) 10%, transparent);
-  border-color: var(--vw-danger);
-}
-.rename-danger-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Mutual-delete banner ── */
 .delete-banner {

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
 import { useIdentity } from '../identity'
 import { avatarInitials, avatarScheme, sessionDisplay, useLabels } from '../labels'
 import { useSessions } from '../sessions'
@@ -8,21 +7,6 @@ import AppLogo from '../components/AppLogo.vue'
 const { identity } = useIdentity()
 const { sessions, error: sessionsError } = useSessions()
 const { labels } = useLabels()
-const fingerprint = ref<string | null>(null)
-
-watch(
-  identity,
-  async (id) => {
-    if (!id) { fingerprint.value = null; return }
-    const spki = Uint8Array.from(atob(id.publicKeySpkiBase64), (c) => c.charCodeAt(0))
-    const hash = await crypto.subtle.digest('SHA-256', spki)
-    fingerprint.value = Array.from(new Uint8Array(hash))
-      .slice(0, 8)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join(':')
-  },
-  { immediate: true },
-)
 
 function relativeTime(d: Date | null): string {
   if (!d) return ''
@@ -56,23 +40,21 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
     <header class="vw-topbar">
       <AppLogo size="sm" />
       <div class="topbar-right">
+        <!-- "you" pill — at-a-glance reference to your own UID prefix.
+             Replaces the two big info cards that previously took 1/3 of
+             the home view. Click goes to /profile (same as the gear). -->
+        <router-link
+          v-if="identity"
+          :to="{ name: 'profile' }"
+          class="me-pill"
+          :title="`You — ${identity.uid}\nClick to open profile`"
+        >{{ identity.uid.slice(0, 10) }}…</router-link>
         <router-link to="/profile" class="profile-link" title="Profile & vanish settings">⚙</router-link>
         <span class="vw-badge-e2e">end-to-end encrypted</span>
       </div>
     </header>
 
     <div class="home-body">
-      <div class="uid-row">
-        <div class="vw-card uid-card">
-          <div class="field-label">Your UID</div>
-          <code class="uid-val">{{ identity?.uid?.slice(0, 14) }}…</code>
-        </div>
-        <div class="vw-card uid-card">
-          <div class="field-label">Key fingerprint</div>
-          <code class="uid-val">{{ fingerprint ?? '…' }}</code>
-        </div>
-      </div>
-
       <router-link to="/create" class="vw-btn-primary new-btn">
         <span class="new-icon">+</span>
         New encrypted session
@@ -130,7 +112,26 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+/* The "you" pill mirrors the .vw-pill aesthetic but is interactive — small
+   monospace UID prefix that links to /profile. Sits between the logo and
+   the gear icon as a unobtrusive identity anchor. */
+.me-pill {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: var(--vw-surface2);
+  color: var(--vw-text2);
+  border: 0.5px solid var(--vw-border);
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+.me-pill:hover {
+  color: var(--vw-purple-pale);
+  border-color: var(--vw-border2);
 }
 
 .profile-link {
@@ -155,31 +156,6 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-
-.uid-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.uid-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-text3);
-}
-
-.uid-val {
-  font-size: 11px;
-  color: var(--vw-purple-light);
-  word-break: break-all;
 }
 
 .new-btn {

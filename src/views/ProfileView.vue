@@ -13,6 +13,10 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const saved = ref(false)
 const copied = ref(false)
+const linkCopied = ref(false)
+// navigator.share availability is fixed for the page lifetime — desktop
+// Chrome / Firefox don't have it, mobile Safari + Chrome do.
+const supportsShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
 // 5m / 15m / 30m / 1h / 6h / 24h — covers the common-case spread without
 // committing the user to typing into a number field for the obvious values.
@@ -51,6 +55,33 @@ async function copyUid(): Promise<void> {
     copied.value = true
     setTimeout(() => {
       copied.value = false
+    }, 1500)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// Mirrors the share-invite flow on /create — Profile is the natural home
+// for "give my UID to someone so they can invite me", so duplicate the
+// affordance here. Same native-share-with-clipboard-fallback contract;
+// only `url` (no `text`) so receivers paste a clean link.
+async function shareInviteLink(): Promise<void> {
+  if (!identity.value) return
+  error.value = null
+  const url = `${window.location.origin}/join/${identity.value.uid}`
+  if (supportsShare) {
+    try {
+      await navigator.share({ title: 'VanishWhisper invite', url })
+      return
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    linkCopied.value = true
+    setTimeout(() => {
+      linkCopied.value = false
     }, 1500)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -100,9 +131,23 @@ function isDirty(): boolean {
       <div class="vw-card uid-card">
         <div class="field-label">Your UID</div>
         <code class="uid-val">{{ identity?.uid ?? '…' }}</code>
-        <button type="button" class="copy-btn" :disabled="!identity" @click="copyUid">
-          {{ copied ? 'Copied!' : 'Copy' }}
-        </button>
+        <div class="uid-actions">
+          <button type="button" class="copy-btn" :disabled="!identity" @click="copyUid">
+            {{ copied ? '✓ Copied' : 'Copy UID' }}
+          </button>
+          <button
+            type="button"
+            class="copy-btn primary"
+            :disabled="!identity"
+            @click="shareInviteLink"
+          >{{
+            linkCopied
+              ? '✓ Copied link'
+              : supportsShare
+                ? 'Share invite link'
+                : 'Copy invite link'
+          }}</button>
+        </div>
       </div>
 
       <div class="vw-card">
@@ -151,10 +196,6 @@ function isDirty(): boolean {
           >{{ saving ? 'Saving…' : 'Save' }}</button>
           <span v-if="saved" class="vw-text-green save-msg">✓ saved</span>
         </div>
-
-        <p class="hint subtle">
-          Open chats keep their loaded values until you reopen them — navigate back to a session for the new setting to take effect there.
-        </p>
 
         <p v-if="error" class="vw-text-danger">{{ error }}</p>
       </div>
@@ -210,11 +251,16 @@ function isDirty(): boolean {
   display: block;
 }
 
-.uid-card { display: flex; flex-direction: column; gap: 6px; }
+.uid-card { display: flex; flex-direction: column; gap: 8px; }
+
+.uid-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
 
 .copy-btn {
-  align-self: flex-start;
-  margin-top: 2px;
   font-size: 11px;
   padding: 5px 12px;
   border-radius: 6px;
@@ -222,13 +268,24 @@ function isDirty(): boolean {
   background: none;
   color: var(--vw-purple-light);
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .copy-btn:hover:not(:disabled) {
   color: var(--vw-purple-pale);
   border-color: var(--vw-purple-mid);
 }
 .copy-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* "Share invite link" gets the headline filled treatment so the
+   share-with-someone flow is more discoverable than the raw-UID copy. */
+.copy-btn.primary {
+  background: var(--vw-purple-deep);
+  border-color: var(--vw-purple-deep);
+  color: var(--vw-purple-pale);
+}
+.copy-btn.primary:hover:not(:disabled) {
+  background: var(--vw-purple-mid);
+  border-color: var(--vw-purple-mid);
+}
 
 .hint {
   font-size: 11px;
