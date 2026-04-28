@@ -160,7 +160,7 @@ async function submit() {
 
 .success-box {
   background: var(--vw-green-dim);
-  border: 0.5px solid #2D4A2D;
+  border: 0.5px solid var(--vw-green-deep);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 12px;

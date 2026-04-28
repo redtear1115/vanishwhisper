@@ -192,7 +192,7 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: rgba(229, 207, 247, 0.15);
+  background: color-mix(in srgb, var(--vw-purple-pale) 15%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -303,8 +303,8 @@ function avatarSchemeFor(otherUid: string): 'purple' | 'green' {
   border: 0.5px solid var(--vw-border2);
 }
 .delete-pending-pill:not([title*="Waiting"]) {
-  background: rgba(232, 92, 122, 0.15);
+  background: color-mix(in srgb, var(--vw-danger) 15%, transparent);
   color: var(--vw-danger);
-  border-color: rgba(232, 92, 122, 0.4);
+  border-color: color-mix(in srgb, var(--vw-danger) 40%, transparent);
 }
 </style>

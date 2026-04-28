@@ -867,7 +867,7 @@ async function onAgreeDelete(): Promise<void> {
 .rename-danger-btn {
   align-self: flex-start;
   background: none;
-  border: 0.5px solid rgba(232, 92, 122, 0.4);
+  border: 0.5px solid color-mix(in srgb, var(--vw-danger) 40%, transparent);
   border-radius: 8px;
   padding: 8px 14px;
   color: var(--vw-danger);
@@ -876,7 +876,7 @@ async function onAgreeDelete(): Promise<void> {
   transition: background 0.15s, border-color 0.15s;
 }
 .rename-danger-btn:hover:not(:disabled) {
-  background: rgba(232, 92, 122, 0.1);
+  background: color-mix(in srgb, var(--vw-danger) 10%, transparent);
   border-color: var(--vw-danger);
 }
 .rename-danger-btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -893,11 +893,11 @@ async function onAgreeDelete(): Promise<void> {
   border-bottom: 0.5px solid var(--vw-border);
 }
 .delete-banner.mine {
-  background: rgba(157, 118, 193, 0.12);
+  background: color-mix(in srgb, var(--vw-purple-light) 12%, transparent);
   color: var(--vw-purple-pale);
 }
 .delete-banner.theirs {
-  background: rgba(232, 92, 122, 0.12);
+  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
   color: var(--vw-danger);
 }
 .delete-banner span { flex: 1; min-width: 200px; }
@@ -915,15 +915,17 @@ async function onAgreeDelete(): Promise<void> {
   cursor: pointer;
   transition: background 0.15s;
 }
-.delete-banner-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+.delete-banner-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vw-text) 6%, transparent);
+}
 .delete-banner-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .delete-banner-btn.danger {
   background: var(--vw-danger);
   border-color: var(--vw-danger);
-  color: white;
+  color: var(--vw-text);
 }
 .delete-banner-btn.danger:hover:not(:disabled) {
-  background: rgba(232, 92, 122, 0.85);
+  background: color-mix(in srgb, var(--vw-danger) 85%, transparent);
 }
 
 /* ── Chat empty state ── */
@@ -937,8 +939,8 @@ async function onAgreeDelete(): Promise<void> {
 /* ── Error banner ── */
 .error-banner {
   padding: 8px 16px;
-  background: rgba(232, 92, 122, 0.12);
-  border-bottom: 0.5px solid rgba(232, 92, 122, 0.3);
+  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
+  border-bottom: 0.5px solid color-mix(in srgb, var(--vw-danger) 30%, transparent);
   font-size: 12px;
   color: var(--vw-danger);
   flex-shrink: 0;
@@ -1099,7 +1101,7 @@ async function onAgreeDelete(): Promise<void> {
    break up the otherwise all-purple chat. */
 .reaction-pill.mine {
   border-color: var(--vw-green-strong);
-  background: rgba(123, 196, 123, 0.15);
+  background: color-mix(in srgb, var(--vw-green-strong) 15%, transparent);
 }
 
 .reaction-count {
@@ -1185,7 +1187,10 @@ async function onAgreeDelete(): Promise<void> {
 .lightbox {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.92);
+  /* Lightbox backdrop is a near-opaque tint of the deepest app surface
+     rather than raw black — keeps the whole app feeling on-palette even
+     when the overlay is at full strength. */
+  background: color-mix(in srgb, var(--vw-bg) 96%, #000);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1215,9 +1220,9 @@ async function onAgreeDelete(): Promise<void> {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--vw-text) 10%, transparent);
   border: none;
-  color: white;
+  color: var(--vw-text);
   font-size: 22px;
   line-height: 1;
   padding: 0;
@@ -1228,6 +1233,6 @@ async function onAgreeDelete(): Promise<void> {
   transition: background 0.15s;
 }
 .lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: color-mix(in srgb, var(--vw-text) 20%, transparent);
 }
 </style>

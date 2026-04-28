@@ -1,7 +1,8 @@
-/* VanishWhisper design tokens
-   Generated from brand design — Whisp ghost cat mascot
-   Purple palette: #5B0888 / #713ABE / #9D76C1 / #E5CFF7
-   Mint green:     #A8D8A8 / #7BC47B
+/* VanishWhisper design tokens — Whisp ghost cat mascot palette.
+   The full token table (with documented usage per token) lives in
+   CLAUDE.md under "色票 / Design tokens". When introducing a new colour,
+   use one of these tokens or a color-mix(in srgb, var(--vw-*) X%, transparent)
+   tint of one — DO NOT hardcode raw hex / rgba values in components.
 */
 
 :root {
@@ -72,14 +73,14 @@ code {
   border-radius: 99px;
   background: var(--vw-green-dim);
   color: var(--vw-green-strong);
-  border: 0.5px solid #2D4A2D;
+  border: 0.5px solid var(--vw-green-deep);
 }
 
 .vw-pill {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 99px;
-  background: #2A1A3A;
+  background: var(--vw-surface2);
   color: var(--vw-purple-light);
   border: 0.5px solid var(--vw-border2);
 }
@@ -89,7 +90,7 @@ code {
 .vw-pill--live {
   background: var(--vw-green-dim);
   color: var(--vw-green-strong);
-  border-color: #2D4A2D;
+  border-color: var(--vw-green-deep);
 }
 
 .vw-btn-primary {
@@ -123,7 +124,10 @@ code {
 .vw-btn-send:hover { background: var(--vw-purple-deep); }
 
 .vw-input {
-  background: #1A1228;
+  /* Inputs sit one layer DEEPER than the surrounding bar (--vw-surface)
+     so they read as a depressed/inset slot. --vw-bg is the deepest layer,
+     which gives the right 3-step depth pyramid: bg < surface < surface2. */
+  background: var(--vw-bg);
   border: 0.5px solid var(--vw-border2);
   border-radius: 8px;
   padding: 9px 12px;
@@ -137,7 +141,7 @@ code {
 .vw-input:focus { border-color: var(--vw-purple-mid); }
 
 .vw-input-pill {
-  background: #1A1228;
+  background: var(--vw-bg);
   border: 0.5px solid var(--vw-border2);
   border-radius: 20px;
   padding: 8px 14px;
