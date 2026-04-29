@@ -66,6 +66,15 @@ const readFired = new Set<string>()
 const deletedFired = new Set<string>()
 const pickerOpenFor = ref<string | null>(null)
 
+// Reply / quote target. When non-null, the next sent text/sticker/image
+// message will store ReplyTo = this id. Cleared automatically once the send
+// resolves OR the user dismisses the chip with × on the input bar.
+const replyTo = ref<ChatMessageRow | null>(null)
+// While briefly set, the row whose data-mid matches gets a highlight ring —
+// fired by jumpToReply() so the user's eye lands on the original message
+// after the smooth-scroll. Cleared by a setTimeout after the keyframe ends.
+const pulseMid = ref<string | null>(null)
+
 // Auto-scroll: keep the chat pinned to the bottom when the user is already
 // there (so new messages stay visible without manual scroll). If they've
 // scrolled up to read older history, leave their position alone — only
@@ -287,9 +296,13 @@ async function send(): Promise<void> {
   if (!opened.value || !draft.value.trim()) return
   sending.value = true
   error.value = null
+  // Snapshot the reply id BEFORE the await so a late state mutation doesn't
+  // either lose the link or carry it onto a follow-up unrelated send.
+  const replyId = replyTo.value?.id ?? null
   try {
-    await sendMessage(props.id, opened.value.sessionKey, draft.value)
+    await sendMessage(props.id, opened.value.sessionKey, draft.value, replyId)
     draft.value = ''
+    replyTo.value = null
     // Force stick — even if the user had scrolled up, sending obviously
     // means they want to see what they just sent.
     stickToBottom = true
@@ -315,8 +328,10 @@ async function onPickSticker(stickerKey: string): Promise<void> {
   // Close picker before the async send so the click feedback is immediate.
   stickerPickerOpen.value = false
   error.value = null
+  const replyId = replyTo.value?.id ?? null
   try {
-    await sendStickerMessage(props.id, stickerKey)
+    await sendStickerMessage(props.id, stickerKey, replyId)
+    replyTo.value = null
     stickToBottom = true
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -332,8 +347,10 @@ async function onFileSelected(e: Event): Promise<void> {
   if (!file || !opened.value) return
   sendingImage.value = true
   error.value = null
+  const replyId = replyTo.value?.id ?? null
   try {
-    await sendImageMessage(props.id, opened.value.sessionKey, file)
+    await sendImageMessage(props.id, opened.value.sessionKey, file, replyId)
+    replyTo.value = null
     stickToBottom = true
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -515,6 +532,70 @@ function onDocumentKeydown(e: KeyboardEvent): void {
   if (lightboxUrl.value !== null) closeLightbox()
   if (menuOpen.value) menuOpen.value = false
   if (stickerPickerOpen.value) stickerPickerOpen.value = false
+}
+
+// Reply target lookup. We pull from messages.value (the unfiltered store)
+// rather than visibleMessages so a target that's been auto-vanished still
+// resolves — we then check deletedAt to render the "[message vanished]"
+// placeholder. Returning undefined when the original is gone entirely
+// (cascade-delete races) lets the snippet helper render the same placeholder.
+function findReplyTarget(replyId: string): ChatMessageRow | undefined {
+  return messages.value.find((m) => m.id === replyId)
+}
+
+// Compact one-line summary of a message, suitable for both the bubble's
+// quote strip and the input-bar reply chip. Keeps types covered:
+//   - vanished (deletedAt set OR target missing): "[message vanished]"
+//   - failed decrypt:                              "[unable to decrypt]"
+//   - sticker:                                     "[sticker]"
+//   - image:                                       "📷 image"
+//   - text: truncated to ~80 chars
+function replySnippet(target: ChatMessageRow | undefined): string {
+  if (!target || target.deletedAt) return '[message vanished]'
+  if (target.text === null) return '[unable to decrypt]'
+  if (target.sticker) return '[sticker]'
+  if (target.attachment) return '📷 image'
+  if (target.text === '') return '[empty message]'
+  const t = target.text
+  return t.length > 80 ? t.slice(0, 80) + '…' : t
+}
+
+function replyAuthorLabel(target: ChatMessageRow | undefined): string {
+  if (!target) return ''
+  return target.fromMe ? 'You' : 'Them'
+}
+
+function startReply(m: ChatMessageRow): void {
+  replyTo.value = m
+  // Pop the keyboard / focus the input so the user can start typing
+  // immediately after picking a target — the typical reply flow.
+  void nextTick().then(() => draftInputRef.value?.focus())
+}
+
+function cancelReply(): void {
+  replyTo.value = null
+}
+
+// Click-to-jump on the bubble's quote strip. Find the target row in the
+// scrollable container by data-mid, smooth-scroll it into view, and pulse
+// the bubble briefly so the user's eye lands on it. No-op when the target
+// has already vanished (the strip itself shows the "[vanished]" hint).
+function jumpToReply(replyId: string): void {
+  const container = messagesContainerRef.value
+  if (!container) return
+  // CSS.escape guards against unusual chars in Firestore doc ids (they're
+  // alphanumeric in practice, but the API contract doesn't promise that).
+  const el = container.querySelector<HTMLElement>(
+    `[data-mid="${CSS.escape(replyId)}"]`,
+  )
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  pulseMid.value = replyId
+  // Auto-clear after the keyframe finishes so the class doesn't stick
+  // around (would prevent re-triggering on a second jump to the same row).
+  setTimeout(() => {
+    if (pulseMid.value === replyId) pulseMid.value = null
+  }, 1600)
 }
 
 async function onDelete(messageId: string): Promise<void> {
@@ -727,9 +808,30 @@ async function onAgreeDelete(): Promise<void> {
       <div
         v-for="(m, idx) in visibleMessages"
         :key="m.id"
+        :data-mid="m.id"
         class="msg-row"
-        :class="[m.fromMe ? 'msg-me' : 'msg-them', isLastOfGroup(idx) ? 'group-end' : 'group-mid']"
+        :class="[
+          m.fromMe ? 'msg-me' : 'msg-them',
+          isLastOfGroup(idx) ? 'group-end' : 'group-mid',
+          { pulse: pulseMid === m.id },
+        ]"
       >
+        <!-- Quote strip — appears above the bubble whenever this message
+             replies to another. Clicking jumps to and pulses the original.
+             Renders even if the target has vanished (snippet helper shows
+             the placeholder), so the conversational thread is preserved
+             visually even after the original disappears. -->
+        <button
+          v-if="m.replyTo"
+          type="button"
+          class="reply-jump"
+          :title="findReplyTarget(m.replyTo) ? 'Jump to original' : 'Original message has vanished'"
+          @click.stop="jumpToReply(m.replyTo)"
+        >
+          <span class="reply-jump-author">↩ {{ replyAuthorLabel(findReplyTarget(m.replyTo)) }}</span>
+          <span class="reply-jump-snippet">{{ replySnippet(findReplyTarget(m.replyTo)) }}</span>
+        </button>
+
         <!-- Bubble (per-message). Unsend lives inside the bubble as a hover
              affordance so even mid-group messages can be unsent — the shared
              meta row below carries no per-message controls. Sticker / image /
@@ -742,6 +844,17 @@ async function onAgreeDelete(): Promise<void> {
             { 'has-image': m.attachment, 'has-sticker': m.sticker },
           ]"
         >
+          <!-- Reply trigger — hover-revealed on the OPPOSITE side of the
+               bubble from the existing delete/react buttons so the two
+               clusters don't overlap. Available on both inbound and
+               outbound bubbles (you can quote yourself to revive lost
+               context in a slow back-and-forth too). -->
+          <button
+            class="bubble-reply"
+            type="button"
+            title="Reply"
+            @click.stop="startReply(m)"
+          >↩</button>
           <template v-if="m.sticker">
             <img
               v-if="stickerUrl(m.sticker)"
@@ -828,6 +941,25 @@ async function onAgreeDelete(): Promise<void> {
         >×</button>
       </div>
     </Teleport>
+
+    <!-- Reply preview chip. Sits just above the input bar so it visually
+         "feeds into" the next message being composed. Carries an X to
+         cancel; otherwise it clears automatically when the send resolves.
+         Snippet helper covers vanished/sticker/image/decrypt-fail cases. -->
+    <div v-if="replyTo && opened" class="reply-preview" @click.stop>
+      <div class="reply-preview-content">
+        <span class="reply-preview-author">
+          Replying to {{ replyTo.fromMe ? 'yourself' : 'them' }}
+        </span>
+        <span class="reply-preview-snippet">{{ replySnippet(replyTo) }}</span>
+      </div>
+      <button
+        type="button"
+        class="reply-preview-close"
+        aria-label="Cancel reply"
+        @click="cancelReply"
+      >×</button>
+    </div>
 
     <!-- Input bar -->
     <form v-if="opened" class="input-bar" @submit.prevent="send">
@@ -1494,4 +1626,149 @@ async function onAgreeDelete(): Promise<void> {
 .lightbox-close:hover {
   background: color-mix(in srgb, var(--vw-text) 20%, transparent);
 }
+
+/* ── Reply / quote ──
+   Three pieces work together:
+   (1) `.bubble-reply` — hover-revealed ↩ on the OPPOSITE corner from
+       delete/react, sized identically so the clusters look uniform.
+   (2) `.reply-jump` — quote strip above a bubble that itself replies to
+       another message. Click → smooth-scroll + pulse the original.
+   (3) `.reply-preview` — chip above the input bar showing what the next
+       send will quote, with × to cancel.
+
+   The pulse keyframe applies a brief outline ring on the bubble inside the
+   target row when the user clicks a jump; the ring uses box-shadow rather
+   than background-color so it composes cleanly with the bubble's own
+   purple/dark fill instead of overriding it. */
+.bubble-reply {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--vw-surface);
+  border: 0.5px solid var(--vw-border2);
+  color: var(--vw-text3);
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.msg-bubble:hover .bubble-reply { opacity: 1; }
+.bubble-reply:hover { color: var(--vw-purple-pale); }
+/* Touch devices have no hover, so hover-only reveals are invisible there.
+   Reveal the action cluster (reply / react / unsend) at low opacity so the
+   user can find it, and full opacity when the bubble is tapped (focus-within
+   covers the active touch). Mirror the same rule to the existing delete /
+   react buttons so the cluster behaves consistently. */
+@media (hover: none) {
+  .bubble-reply,
+  .bubble-react,
+  .bubble-delete {
+    opacity: 0.55;
+  }
+  .msg-bubble:focus-within .bubble-reply,
+  .msg-bubble:focus-within .bubble-react,
+  .msg-bubble:focus-within .bubble-delete {
+    opacity: 1;
+  }
+}
+
+.reply-jump {
+  background: color-mix(in srgb, var(--vw-purple-light) 8%, transparent);
+  border: none;
+  border-left: 3px solid var(--vw-purple-light);
+  border-radius: 4px 8px 8px 4px;
+  padding: 4px 10px 5px;
+  max-width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  transition: background 0.15s;
+}
+.reply-jump:hover {
+  background: color-mix(in srgb, var(--vw-purple-light) 16%, transparent);
+}
+/* Mirror the accent bar for outbound rows so it points at the bubble
+   (which sits flush right). Otherwise the strip would visually "lean" the
+   wrong way relative to its bubble. */
+.msg-me .reply-jump {
+  border-left: none;
+  border-right: 3px solid var(--vw-purple-light);
+  border-radius: 8px 4px 4px 8px;
+  text-align: right;
+  align-items: flex-end;
+}
+.reply-jump-author {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vw-purple-light);
+}
+.reply-jump-snippet {
+  font-size: 12px;
+  color: var(--vw-text2);
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes msg-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  35%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--vw-purple-light) 35%, transparent); }
+}
+.msg-row.pulse > .msg-bubble {
+  animation: msg-pulse 1.5s ease-in-out;
+}
+
+.reply-preview {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--vw-surface2);
+  border-top: 0.5px solid var(--vw-border);
+  flex-shrink: 0;
+}
+.reply-preview-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 3px solid var(--vw-purple-light);
+  padding-left: 10px;
+}
+.reply-preview-author {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vw-purple-light);
+}
+.reply-preview-snippet {
+  font-size: 12px;
+  color: var(--vw-text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reply-preview-close {
+  background: none;
+  border: none;
+  color: var(--vw-text3);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.reply-preview-close:hover { color: var(--vw-purple-pale); }
 </style>

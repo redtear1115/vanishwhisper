@@ -43,8 +43,18 @@ body {
   background: var(--vw-bg);
   color: var(--vw-text);
   font-family: system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
+  /* 100vh on mobile counts the URL bar / keyboard chrome, so body becomes
+     taller than the visible viewport — that's the "I can keep scrolling
+     past the input bar into blank space" bug on phones. 100dvh tracks the
+     real visible region; the html overscroll-behavior keeps iOS Safari's
+     rubber-band bounce off the body so the inner chat scroll owns the
+     whole gesture. */
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+}
+
+html, body {
+  overscroll-behavior-y: none;
 }
 
 a {

@@ -45,6 +45,15 @@ export interface ChatMessageRow {
   // confidential payload. Mutually exclusive with text/attachment in the UI
   // (sticker-only messages skip Context entirely).
   sticker: string | null
+  // Phase 2 — reply / quote. Stores ONLY the original message id, plaintext
+  // metadata (same trust level as Reactions / Sticker key — the server
+  // already sees both message ids in the same query). Crucially we do NOT
+  // embed a snapshot of the quoted text: that would archive a copy of the
+  // original payload inside this newer message, sidestepping the original's
+  // vanish window — directly hostile to the app's threat model. Instead the
+  // view resolves the id against the live message map at render time, and
+  // shows a "[message vanished]" placeholder once the original is gone.
+  replyTo: string | null
 }
 
 // Image attachment caps, all client-side enforced. Firestore docs are limited
@@ -60,6 +69,7 @@ export async function sendMessage(
   sessionId: string,
   sessionKey: CryptoKey,
   plaintext: string,
+  replyTo?: string | null,
 ): Promise<void> {
   const me = getIdentity()
   const iv = crypto.getRandomValues(new Uint8Array(12))
@@ -72,14 +82,20 @@ export async function sendMessage(
   packed.set(iv, 0)
   packed.set(new Uint8Array(cipher), iv.length)
 
-  const batch = writeBatch(db)
-  batch.set(doc(collection(db, 'ChatMessages')), {
+  // Build the doc shape conditionally — Firestore rejects undefined values,
+  // and we'd rather not write a null ReplyTo on every message either (keeps
+  // the field absent for non-reply messages, which is the common case).
+  const docData: Record<string, unknown> = {
     SessionID: sessionId,
     UserID: me.uid,
     Context: bytesToBase64(packed),
     CreatedAt: serverTimestamp(),
     UpdatedAt: serverTimestamp(),
-  })
+  }
+  if (replyTo) docData.ReplyTo = replyTo
+
+  const batch = writeBatch(db)
+  batch.set(doc(collection(db, 'ChatMessages')), docData)
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
     LastMessageBy: me.uid,
@@ -158,6 +174,7 @@ export function subscribeMessages(
             reactions: (data.Reactions as Record<string, string[]> | undefined) ?? {},
             attachment,
             sticker: (data.Sticker as string | undefined) ?? null,
+            replyTo: (data.ReplyTo as string | undefined) ?? null,
           })
         }),
       )
@@ -247,6 +264,7 @@ export async function sendImageMessage(
   sessionId: string,
   sessionKey: CryptoKey,
   file: File,
+  replyTo?: string | null,
 ): Promise<void> {
   if (!file.type.startsWith('image/')) {
     throw new Error('Not an image file.')
@@ -276,8 +294,7 @@ export async function sendImageMessage(
   // 3. Write — Attachment is a sub-map; Width/Height stay plaintext for
   //    layout (not confidential — the recipient can read them from the
   //    decrypted image anyway). Image-only messages have no Context field.
-  const batch = writeBatch(db)
-  batch.set(doc(collection(db, 'ChatMessages')), {
+  const docData: Record<string, unknown> = {
     SessionID: sessionId,
     UserID: me.uid,
     Attachment: {
@@ -288,7 +305,11 @@ export async function sendImageMessage(
     },
     CreatedAt: serverTimestamp(),
     UpdatedAt: serverTimestamp(),
-  })
+  }
+  if (replyTo) docData.ReplyTo = replyTo
+
+  const batch = writeBatch(db)
+  batch.set(doc(collection(db, 'ChatMessages')), docData)
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
     LastMessageBy: me.uid,
@@ -335,19 +356,23 @@ async function compressImage(file: File): Promise<{
 export async function sendStickerMessage(
   sessionId: string,
   stickerKey: string,
+  replyTo?: string | null,
 ): Promise<void> {
   const me = getIdentity()
   // Plaintext like reactions — sticker keys are drawn from a public 9-item
   // list bundled with the app, so encryption adds no confidentiality. No
   // session key required for this path.
-  const batch = writeBatch(db)
-  batch.set(doc(collection(db, 'ChatMessages')), {
+  const docData: Record<string, unknown> = {
     SessionID: sessionId,
     UserID: me.uid,
     Sticker: stickerKey,
     CreatedAt: serverTimestamp(),
     UpdatedAt: serverTimestamp(),
-  })
+  }
+  if (replyTo) docData.ReplyTo = replyTo
+
+  const batch = writeBatch(db)
+  batch.set(doc(collection(db, 'ChatMessages')), docData)
   batch.update(doc(db, 'ChatSessions', sessionId), {
     UpdatedAt: serverTimestamp(),
     LastMessageBy: me.uid,
