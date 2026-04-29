@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getIdentity } from '../identity'
-import { markVisited, sessionDisplay, setHidden, setLabel, setSessionState, useLabels } from '../labels'
+import { markVisited, sessionDisplay, setHidden, setLabel, useLabels } from '../labels'
 import {
   deleteMessage,
   markDeleted,
@@ -649,25 +649,6 @@ async function onMenuRequestDelete(): Promise<void> {
   await onRequestDelete()
 }
 
-// Pin / Archive toggles. Each is a 3-state toggle:
-//   default → action sets state to target
-//   target  → action clears state back to default
-//   other   → action switches to target (pin and archive are exclusive)
-const sessionState = computed(
-  () => labels.value.get(props.id)?.state ?? 'default',
-)
-
-async function toggleSessionState(target: 'pinned' | 'archived'): Promise<void> {
-  menuOpen.value = false
-  error.value = null
-  try {
-    const next = sessionState.value === target ? undefined : target
-    await setSessionState(props.id, next)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  }
-}
-
 // Per-session client-side hide. Local-only (labels.ts → IDB) — the other
 // party doesn't know we hid them. While hidden the message list and input
 // bar are replaced by the same empty-state placeholder a brand-new chat
@@ -735,17 +716,10 @@ async function onAgreeDelete(): Promise<void> {
       <span class="vw-badge-e2e">E2E</span>
 
       <div v-if="menuOpen" class="header-menu" @click.stop>
+        <!-- Session-internal actions only. List-management (Pin / Archive)
+             lives in the home row's per-row ⋯ menu, since those are about
+             how the row sits in the home list rather than the chat itself. -->
         <button type="button" class="header-menu-item" @click="onMenuRename">Rename</button>
-        <button
-          type="button"
-          class="header-menu-item"
-          @click="toggleSessionState('pinned')"
-        >{{ sessionState === 'pinned' ? 'Unpin' : 'Pin to top' }}</button>
-        <button
-          type="button"
-          class="header-menu-item"
-          @click="toggleSessionState('archived')"
-        >{{ sessionState === 'archived' ? 'Unarchive' : 'Archive' }}</button>
         <button
           type="button"
           class="header-menu-item"
