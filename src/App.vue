@@ -29,6 +29,7 @@ const { identity, error } = useIdentity()
 <style scoped>
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   /* Cap the column on desktop — full-width chat past ~720px reads as a
      wall of text. On phones this collapses naturally to the viewport
      width since max-width takes the smaller value. */

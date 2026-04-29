@@ -891,7 +891,12 @@ async function onAgreeDelete(): Promise<void> {
 .chat-wrap {
   display: flex;
   flex-direction: column;
+  /* 100vh on mobile counts the address bar / keyboard area, so when the
+     soft keyboard opens the input bar gets pushed below the visible
+     viewport. 100dvh tracks the actual visible region so messages scroll
+     independently and the input bar stays pinned. */
   height: 100vh;
+  height: 100dvh;
   background: var(--vw-bg);
 }
 
