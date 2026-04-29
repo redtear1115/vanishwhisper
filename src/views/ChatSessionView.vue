@@ -250,12 +250,48 @@ watch([myMinutes, otherMinutes], () => {
   progressStyleCache.clear()
 })
 
+// Per-session client-side hide. Local-only (labels.ts → IDB) — the other
+// party doesn't know we hid them. While hidden the message list and input
+// bar are replaced by the same empty-state placeholder a brand-new chat
+// shows, so a glance at the screen looks like an empty conversation rather
+// than a deliberately hidden one. Declared here (rather than next to its
+// menu handler down below) because `visibleMessages` reads it, and the
+// watcher on visibleMessages right after this block runs its source getter
+// once during setup to register reactive deps — if sessionHidden weren't
+// initialised by that point, that initial getter eval would throw a TDZ
+// ReferenceError and the whole chat view would fail to render.
+const sessionHidden = computed(() => labels.value.get(props.id)?.hidden === true)
+
+async function onMenuToggleHide(): Promise<void> {
+  menuOpen.value = false
+  error.value = null
+  try {
+    await setHidden(props.id, !sessionHidden.value)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// On hide-on, drop any in-progress reply chip — the input bar is about to
+// disappear and a stale replyTo would resurface attached to the next thing
+// the user composes after un-hiding. On hide-off, replay ackUnread against
+// the current row set so messages received during the hidden window get
+// marked read now (subscribeMessages's callback already ran while we were
+// suppressing, so we have to manually reconcile).
+watch(sessionHidden, (hidden) => {
+  if (hidden) {
+    replyTo.value = null
+  } else {
+    ackUnread(messages.value)
+  }
+})
+
 // Skip while the chat is client-side-hidden: writing ReadAt would start the
 // vanish timer for messages the user explicitly chose not to look at, so
 // hidden mode acts as a soft pause on Read & Vanish. When the user toggles
-// back to visible, the watcher below reruns this on the current row set so
-// anything that piled up while hidden gets acked exactly as if the user had
-// just opened the chat.
+// back to visible, the sessionHidden watcher above reruns this on the
+// current row set so anything that piled up while hidden gets acked
+// exactly as if the user had just opened the chat.
 function ackUnread(rows: ChatMessageRow[]): void {
   if (sessionHidden.value) return
   for (const m of rows) {
@@ -648,37 +684,6 @@ async function onMenuRequestDelete(): Promise<void> {
   menuOpen.value = false
   await onRequestDelete()
 }
-
-// Per-session client-side hide. Local-only (labels.ts → IDB) — the other
-// party doesn't know we hid them. While hidden the message list and input
-// bar are replaced by the same empty-state placeholder a brand-new chat
-// shows, so a glance at the screen looks like an empty conversation rather
-// than a deliberately hidden one.
-const sessionHidden = computed(() => labels.value.get(props.id)?.hidden === true)
-
-async function onMenuToggleHide(): Promise<void> {
-  menuOpen.value = false
-  error.value = null
-  try {
-    await setHidden(props.id, !sessionHidden.value)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  }
-}
-
-// On hide-on, drop any in-progress reply chip — the input bar is about to
-// disappear and a stale replyTo would resurface attached to the next thing
-// the user composes after un-hiding. On hide-off, replay ackUnread against
-// the current row set so messages received during the hidden window get
-// marked read now (subscribeMessages's callback already ran while we were
-// suppressing, so we have to manually reconcile).
-watch(sessionHidden, (hidden) => {
-  if (hidden) {
-    replyTo.value = null
-  } else {
-    ackUnread(messages.value)
-  }
-})
 
 async function onAgreeDelete(): Promise<void> {
   error.value = null
