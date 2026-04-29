@@ -94,6 +94,44 @@ export async function setHidden(sessionId: string, hidden: boolean): Promise<voi
   })
 }
 
+// Phase 2.17 — migration export/import. The migration channel hybrid-
+// encrypts the snapshot returned by exportLabels() with the new device's
+// RSA public key, ships it through Firestore as ciphertext, and the new
+// device feeds the decrypted snapshot to importLabels() on first sight.
+//
+// labels are still IDB-only end-to-end: the threat-model rule "labels
+// don't reach Firestore in plaintext" holds — the wire format the server
+// sees is opaque ciphertext, same trust level as RSA-wrapped session keys.
+
+export interface LabelExport extends SessionLabel {
+  sessionId: string
+}
+
+// Snapshot every label currently in IDB. Awaits initial IDB load so a
+// fresh process that immediately calls export doesn't see an empty Map.
+export async function exportLabels(): Promise<LabelExport[]> {
+  if (!initPromise) initPromise = init()
+  await initPromise
+  const out: LabelExport[] = []
+  for (const [sessionId, label] of labelsRef.value) {
+    out.push({ sessionId, ...label })
+  }
+  return out
+}
+
+// Bulk write imported labels. Per-row OVERWRITE semantics (any pre-
+// existing label for the same sessionId is replaced) — for the active
+// hand-off use case, the new device shouldn't have prior labels for a
+// migrated session anyway, since the sessionId only enters its world
+// after the slot swap. Each row goes through mergePrefs to keep the
+// reactive Map in sync with IDB.
+export async function importLabels(rows: LabelExport[]): Promise<void> {
+  for (const row of rows) {
+    const { sessionId, ...fields } = row
+    await mergePrefs(sessionId, () => ({ ...fields }))
+  }
+}
+
 // Read-merge-write inside one IDB transaction so concurrent calls for the
 // same session don't lose updates (mount fires markVisited at the same
 // moment a Pin click fires setSessionState — both should land). Drops the

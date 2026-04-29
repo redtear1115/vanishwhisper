@@ -30,11 +30,13 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -42,6 +44,7 @@ import {
 import { base64ToBytes, bytesToBase64 } from './codec'
 import { db } from './firebase'
 import { getIdentity } from './identity'
+import { exportLabels, importLabels, type LabelExport } from './labels'
 import type { ChatMessageRow } from './messages'
 
 export interface TargetIdentity {
@@ -177,6 +180,110 @@ export async function migrateAllSessions(
     done++
     onProgress?.(done, sessions.length)
   }
+}
+
+// ---- Labels hand-off ----
+//
+// The session swap above moves data; this moves the cosmetic IDB layer
+// (sessionName, otherName, pinned/archived, hidden, lastSeenAt) so the
+// new device's home doesn't degrade to "everyone is a UID prefix". Hybrid
+// AES-GCM + RSA-OAEP because RSA-2048 with SHA-256 OAEP can only directly
+// encrypt ~190 bytes and a labels JSON for many sessions easily exceeds
+// that. Wire format on Firestore is opaque ciphertext → labels are still
+// IDB-only from the server's perspective, preserving the threat-model
+// rule that plaintext labels never leave the device.
+
+interface MigrationPayload {
+  WrappedKey: string // base64(RSA-OAEP(rawAesKey, recipient.publicKey))
+  IV: string         // base64(12 random bytes)
+  Ciphertext: string // base64(AES-GCM(JSON.stringify(labels), aesKey, iv))
+}
+
+async function packageLabelsFor(target: TargetIdentity, labels: LabelExport[]): Promise<MigrationPayload> {
+  const json = JSON.stringify(labels)
+  const data = new TextEncoder().encode(json)
+  // Ephemeral AES key, used once for this hand-off.
+  const aesKey = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt'],
+  )
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, data)
+  // Wrap the AES key with the new device's public key — only that
+  // device's private key (which we never see) can unwrap it.
+  const aesRaw = await crypto.subtle.exportKey('raw', aesKey)
+  const targetPub = await importRsaPublicKey(target.publicKeySpkiBase64)
+  const wrappedKey = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, targetPub, aesRaw)
+  return {
+    WrappedKey: bytesToBase64(wrappedKey),
+    IV: bytesToBase64(iv),
+    Ciphertext: bytesToBase64(ciphertext),
+  }
+}
+
+// Uploads the local IDB label snapshot, encrypted for the target device.
+// Idempotent: setDoc overwrites — re-running migration replaces any
+// previously-uploaded payload. Skips entirely if the snapshot is empty
+// (no labels to send → no Firestore write at all).
+export async function uploadLabelsPayload(target: TargetIdentity): Promise<number> {
+  const labels = await exportLabels()
+  if (labels.length === 0) return 0
+  const me = getIdentity()
+  const payload = await packageLabelsFor(target, labels)
+  await setDoc(doc(db, 'Migrations', target.uid), {
+    FromUID: me.uid,
+    Payload: payload,
+    CreatedAt: serverTimestamp(),
+  })
+  return labels.length
+}
+
+// New-device side. Run once on every app launch (cheap — 1 getDoc).
+// Decrypts and applies any pending payload, then deletes the doc.
+// Errors are swallowed at the call site (caller logs) — labels are
+// cosmetic, the rest of the app must work even if this throws.
+export async function tryConsumeLabelsPayload(): Promise<{ applied: number } | null> {
+  const me = getIdentity()
+  const ref = doc(db, 'Migrations', me.uid)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) return null
+  const d = snap.data()
+  const payload = d.Payload as MigrationPayload | undefined
+  if (!payload) {
+    // Malformed — nuke it so we don't keep retrying.
+    await deleteDoc(ref).catch(() => {})
+    return null
+  }
+  // Hybrid decrypt: RSA-OAEP unwrap the AES key with my private key,
+  // then AES-GCM decrypt the labels JSON.
+  const aesRaw = await crypto.subtle.decrypt(
+    { name: 'RSA-OAEP' },
+    me.keyPair.privateKey,
+    base64ToBytes(payload.WrappedKey),
+  )
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    aesRaw,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt'],
+  )
+  const data = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: base64ToBytes(payload.IV) },
+    aesKey,
+    base64ToBytes(payload.Ciphertext),
+  )
+  const json = new TextDecoder().decode(data)
+  const labels = JSON.parse(json) as LabelExport[]
+  await importLabels(labels)
+  // One-shot: delete so we don't replay on the next launch. If the user
+  // later receives ANOTHER migration to this UID, the sender will write
+  // a fresh doc and the next launch picks it up.
+  await deleteDoc(ref).catch((err) => {
+    console.error('migration payload delete failed', err)
+  })
+  return { applied: labels.length }
 }
 
 // ---- New device side: claim orphan messages ----

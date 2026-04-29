@@ -231,5 +231,30 @@ service cloud.firestore {
       allow delete: if request.auth != null
                     && isDeleteAgreerFor(resource.data.SessionID);
     }
+
+    // Phase 2.17 — Migrations: a transient encrypted hand-off channel
+    // for active migration. Old device writes one doc per recipient
+    // carrying { FromUID, Payload }, where Payload is hybrid encryption
+    // (AES-256-GCM ciphertext + RSA-OAEP-wrapped AES key) of the
+    // sender's IDB labels JSON, decryptable only with the recipient's
+    // RSA private key. New device on first launch reads its own
+    // Migrations doc, decrypts, applies to local IDB, deletes.
+    //
+    // Rules trade-offs: the create rule lets ANY authenticated user
+    // write a Migrations doc to ANY existing recipient. We can't
+    // express "only the legitimate previous-self of recipientId" in
+    // rules — there's no on-server link between the OLD UID and the
+    // NEW UID after the session-slot swap (rules see only current
+    // state). The encryption already protects payload secrecy, and a
+    // forged doc only leaks IDB labels for sessionIds the new device
+    // doesn't participate in (so they're never rendered, just inert
+    // rows). Acceptable risk for a feature whose blast radius is
+    // "stranger could plant cosmetic labels you'll never see".
+    match /Migrations/{recipientId} {
+      allow get, delete: if request.auth != null && request.auth.uid == recipientId;
+      allow create, update: if request.auth != null
+                    && request.resource.data.FromUID == request.auth.uid
+                    && exists(/databases/$(database)/documents/Users/$(recipientId));
+    }
   }
 }

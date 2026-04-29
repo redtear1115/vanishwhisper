@@ -50,6 +50,24 @@ function init(): Promise<Identity> {
         }
         const id = await ensureIdentity(user)
         identityRef.value = id
+        // Phase 2.17 — pick up any incoming label hand-off written by an
+        // OLD device that just migrated sessions to this UID. Awaited
+        // before resolve so labels are in IDB before any view that
+        // consumes them mounts; failures are non-fatal (the migration
+        // payload is cosmetic — the chat itself works without it). Done
+        // here rather than per-view because direct-navigating to a chat
+        // URL bypasses HomeView, but identity init always runs first.
+        try {
+          // Lazy import to keep the identity ↔ migration ↔ labels graph
+          // linear at module evaluation time (migration imports labels,
+          // and pulling that in at the top of identity.ts would build a
+          // longer load chain on cold start than it needs to be).
+          const { tryConsumeLabelsPayload } = await import('./migration')
+          const result = await tryConsumeLabelsPayload()
+          if (result) console.info(`migration payload applied: ${result.applied} label(s)`)
+        } catch (err) {
+          console.error('migration payload consume failed:', err)
+        }
         resolve(id)
       } catch (err) {
         errorRef.value = err

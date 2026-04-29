@@ -20,10 +20,12 @@
 //      decommission anyway.
 import { computed, ref } from 'vue'
 import { useIdentity } from '../identity'
+import { exportLabels } from '../labels'
 import {
   fetchTargetIdentity,
   listMigratableSessions,
   migrateAllSessions,
+  uploadLabelsPayload,
   type SessionToMigrate,
   type TargetIdentity,
 } from '../migration'
@@ -34,6 +36,12 @@ const { identity } = useIdentity()
 const draftUid = ref('')
 const target = ref<TargetIdentity | null>(null)
 const sessions = ref<SessionToMigrate[]>([])
+// Snapshot of local IDB labels at lookup time. Driven into the run as a
+// separate step (encrypted hand-off via Migrations/{newUID}) so that
+// label-only migrations are possible — useful when the user already
+// migrated sessions earlier without labels and is now re-running just
+// to ship the cosmetic state across.
+const labelCount = ref(0)
 const verified = ref(false)
 const looking = ref(false)
 const lookupError = ref<string | null>(null)
@@ -42,6 +50,7 @@ type MigrateState = 'idle' | 'running' | 'done' | 'error'
 const state = ref<MigrateState>('idle')
 const progressDone = ref(0)
 const progressTotal = ref(0)
+const labelsApplied = ref(0)
 const runError = ref<string | null>(null)
 
 async function lookup(): Promise<void> {
@@ -49,14 +58,16 @@ async function lookup(): Promise<void> {
   lookupError.value = null
   target.value = null
   sessions.value = []
+  labelCount.value = 0
   verified.value = false
   try {
     const t = await fetchTargetIdentity(draftUid.value)
-    // Snapshot the current session set so the confirmation card can show
-    // a count and the user knows what's about to be moved.
-    const list = await listMigratableSessions()
+    // Snapshot session + label counts so the confirmation card shows
+    // exactly what's about to ship over.
+    const [list, labels] = await Promise.all([listMigratableSessions(), exportLabels()])
     target.value = t
     sessions.value = list
+    labelCount.value = labels.length
   } catch (err) {
     lookupError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -70,11 +81,18 @@ async function run(): Promise<void> {
   runError.value = null
   progressDone.value = 0
   progressTotal.value = sessions.value.length
+  labelsApplied.value = 0
   try {
     await migrateAllSessions(target.value, (done, total) => {
       progressDone.value = done
       progressTotal.value = total
     })
+    // Labels go AFTER sessions: by then the new UID is a participant in
+    // every migrated session, so labels-by-sessionId on the new device
+    // attach to chats it actually has. If a session-swap mid-batch fails
+    // we never get here, which is the right behaviour — partial swap +
+    // full label shipment would label sessions the new UID can't see.
+    labelsApplied.value = await uploadLabelsPayload(target.value)
     state.value = 'done'
   } catch (err) {
     runError.value = err instanceof Error ? err.message : String(err)
@@ -86,6 +104,12 @@ const progressPct = computed(() => {
   if (progressTotal.value === 0) return 0
   return Math.round((progressDone.value / progressTotal.value) * 100)
 })
+
+// Disable the migrate button when there's nothing to actually move.
+// Either at least one session-slot swap to do, OR at least one label to
+// hand off — re-runs after a previous sessions-only migration are the
+// label-only case.
+const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value > 0)
 </script>
 
 <template>
@@ -168,14 +192,20 @@ const progressPct = computed(() => {
         <div class="vw-card">
           <p class="hint">
             <strong>{{ sessions.length }} session{{ sessions.length === 1 ? '' : 's' }}</strong>
-            will be moved. After this, opening VanishWhisper on this device will show an empty
-            home — your sessions live with the new UID.
+            and
+            <strong>{{ labelCount }} local label{{ labelCount === 1 ? '' : 's' }}</strong>
+            (custom names, pin / archive / hide state) will be moved. After this, opening
+            VanishWhisper on this device will show an empty home — your sessions live with the
+            new UID.
+          </p>
+          <p v-if="sessions.length === 0 && labelCount > 0" class="hint subtle">
+            Sessions are already on the new UID; this run only ships the labels across.
           </p>
           <div class="actions">
             <button
               type="button"
               class="vw-btn-primary"
-              :disabled="!verified || sessions.length === 0 || state === 'running' || state === 'done'"
+              :disabled="!verified || !hasWorkToDo || state === 'running' || state === 'done'"
               @click="run"
             >
               {{
@@ -183,7 +213,9 @@ const progressPct = computed(() => {
                   ? `Migrating… (${progressDone}/${progressTotal})`
                   : state === 'done'
                     ? '✓ Done'
-                    : `Migrate ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
+                    : sessions.length > 0
+                      ? `Migrate ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
+                      : `Send ${labelCount} label${labelCount === 1 ? '' : 's'}`
               }}
             </button>
           </div>
@@ -193,8 +225,12 @@ const progressPct = computed(() => {
           </div>
 
           <p v-if="state === 'done'" class="vw-text-green done-msg">
-            Migration complete. Your new device should see all sessions appear under its UID. You
-            can close this app on this device and clear its data when convenient.
+            Migration complete.
+            <span v-if="labelsApplied > 0">
+              {{ labelsApplied }} label{{ labelsApplied === 1 ? '' : 's' }} encrypted and queued
+              — your new device will pick them up on its next launch.
+            </span>
+            You can close this app on this device and clear its data when convenient.
           </p>
           <p v-if="runError" class="vw-text-danger">{{ runError }}</p>
         </div>
