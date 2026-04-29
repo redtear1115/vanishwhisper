@@ -560,12 +560,11 @@ function replySnippet(target: ChatMessageRow | undefined): string {
   return t.length > 80 ? t.slice(0, 80) + '…' : t
 }
 
-function replyAuthorLabel(target: ChatMessageRow | undefined): string {
-  if (!target) return ''
-  return target.fromMe ? 'You' : 'Them'
-}
-
 function startReply(m: ChatMessageRow): void {
+  // Defense in depth: the trigger button is only rendered on inbound
+  // bubbles, but guard the entry point too so a future template tweak
+  // can't accidentally let outbound through.
+  if (m.fromMe) return
   replyTo.value = m
   // Pop the keyboard / focus the input so the user can start typing
   // immediately after picking a target — the typical reply flow.
@@ -820,7 +819,10 @@ async function onAgreeDelete(): Promise<void> {
              replies to another. Clicking jumps to and pulses the original.
              Renders even if the target has vanished (snippet helper shows
              the placeholder), so the conversational thread is preserved
-             visually even after the original disappears. -->
+             visually even after the original disappears. Pure typographic
+             treatment: indent + thin border-left + muted text colour. No
+             icon prefix — the indented quote-block convention reads as
+             "quoted text" without a glyph. -->
         <button
           v-if="m.replyTo"
           type="button"
@@ -828,7 +830,6 @@ async function onAgreeDelete(): Promise<void> {
           :title="findReplyTarget(m.replyTo) ? 'Jump to original' : 'Original message has vanished'"
           @click.stop="jumpToReply(m.replyTo)"
         >
-          <span class="reply-jump-author">↩ {{ replyAuthorLabel(findReplyTarget(m.replyTo)) }}</span>
           <span class="reply-jump-snippet">{{ replySnippet(findReplyTarget(m.replyTo)) }}</span>
         </button>
 
@@ -844,12 +845,14 @@ async function onAgreeDelete(): Promise<void> {
             { 'has-image': m.attachment, 'has-sticker': m.sticker },
           ]"
         >
-          <!-- Reply trigger — hover-revealed on the OPPOSITE side of the
-               bubble from the existing delete/react buttons so the two
-               clusters don't overlap. Available on both inbound and
-               outbound bubbles (you can quote yourself to revive lost
-               context in a slow back-and-forth too). -->
+          <!-- Reply trigger — inbound bubbles only. Quoting your own
+               outbound message is intentionally not offered: the action is
+               about responding to the OTHER party's text, and exposing it
+               on outbound bubbles clutters the hover cluster without a
+               real use case in a 2-party chat. Hover-revealed on the
+               OPPOSITE side from react/unsend so the two don't collide. -->
           <button
+            v-if="!m.fromMe"
             class="bubble-reply"
             type="button"
             title="Reply"
@@ -943,16 +946,13 @@ async function onAgreeDelete(): Promise<void> {
     </Teleport>
 
     <!-- Reply preview chip. Sits just above the input bar so it visually
-         "feeds into" the next message being composed. Carries an X to
+         "feeds into" the next message being composed. Carries an × to
          cancel; otherwise it clears automatically when the send resolves.
-         Snippet helper covers vanished/sticker/image/decrypt-fail cases. -->
+         Snippet helper covers vanished/sticker/image/decrypt-fail cases.
+         Same minimal typographic style as the in-bubble quote strip:
+         indent + thin border-left + muted text, no icon prefix. -->
     <div v-if="replyTo && opened" class="reply-preview" @click.stop>
-      <div class="reply-preview-content">
-        <span class="reply-preview-author">
-          Replying to {{ replyTo.fromMe ? 'yourself' : 'them' }}
-        </span>
-        <span class="reply-preview-snippet">{{ replySnippet(replyTo) }}</span>
-      </div>
+      <span class="reply-preview-snippet">{{ replySnippet(replyTo) }}</span>
       <button
         type="button"
         class="reply-preview-close"
@@ -1677,41 +1677,35 @@ async function onAgreeDelete(): Promise<void> {
   }
 }
 
+/* Quote strip — pure typographic treatment. A 2px left rule + a small
+   indent + secondary text colour reads as "this is quoted" without any
+   icon or chip background, matching how indented-quote blocks work in
+   prose. Hover brightens the rule so the click affordance is still
+   discoverable. The strip mirrors to the right edge for outbound rows
+   so the rule visually "points at" the bubble below it. */
 .reply-jump {
-  background: color-mix(in srgb, var(--vw-purple-light) 8%, transparent);
+  background: none;
   border: none;
-  border-left: 3px solid var(--vw-purple-light);
-  border-radius: 4px 8px 8px 4px;
-  padding: 4px 10px 5px;
+  border-left: 2px solid var(--vw-border2);
+  border-radius: 0;
+  padding: 1px 0 1px 8px;
   max-width: 100%;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  transition: background 0.15s;
+  display: block;
+  transition: border-color 0.15s, color 0.15s;
 }
-.reply-jump:hover {
-  background: color-mix(in srgb, var(--vw-purple-light) 16%, transparent);
-}
-/* Mirror the accent bar for outbound rows so it points at the bubble
-   (which sits flush right). Otherwise the strip would visually "lean" the
-   wrong way relative to its bubble. */
+.reply-jump:hover { border-left-color: var(--vw-purple-light); }
 .msg-me .reply-jump {
   border-left: none;
-  border-right: 3px solid var(--vw-purple-light);
-  border-radius: 8px 4px 4px 8px;
+  border-right: 2px solid var(--vw-border2);
+  padding: 1px 8px 1px 0;
   text-align: right;
-  align-items: flex-end;
 }
-.reply-jump-author {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--vw-purple-light);
-}
+.msg-me .reply-jump:hover { border-right-color: var(--vw-purple-light); }
 .reply-jump-snippet {
+  display: block;
   font-size: 12px;
   color: var(--vw-text2);
   max-width: 240px;
@@ -1728,31 +1722,25 @@ async function onAgreeDelete(): Promise<void> {
   animation: msg-pulse 1.5s ease-in-out;
 }
 
+/* Reply preview — same typographic language as .reply-jump, just laid out
+   horizontally to fit the input bar's row. Indent + thin rule + muted
+   text; no big chip background, no author label (in a 2-party chat where
+   you can only quote the other side, "replying to them" is implicit from
+   the chip's existence). The × is the only affordance. */
 .reply-preview {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  background: var(--vw-surface2);
+  padding: 6px 14px;
+  background: var(--vw-surface);
   border-top: 0.5px solid var(--vw-border);
   flex-shrink: 0;
 }
-.reply-preview-content {
+.reply-preview-snippet {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-left: 3px solid var(--vw-purple-light);
-  padding-left: 10px;
-}
-.reply-preview-author {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--vw-purple-light);
-}
-.reply-preview-snippet {
+  border-left: 2px solid var(--vw-border2);
+  padding: 1px 0 1px 8px;
   font-size: 12px;
   color: var(--vw-text2);
   white-space: nowrap;

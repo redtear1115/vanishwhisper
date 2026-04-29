@@ -57,6 +57,20 @@ html, body {
   overscroll-behavior-y: none;
 }
 
+/* iOS Safari auto-zooms the page whenever a focused <input> / <textarea>
+   has a computed font-size below 16px — that's what makes the chat input
+   pull-zoom on tap and crop the conversation horizontally. Bumping to 16px
+   only on touch devices keeps the desktop look (which uses 13px for a
+   denser layout) untouched. Apply to all our input flavours so the rename
+   panel and any future inputs are covered too. */
+@media (hover: none) {
+  .vw-input,
+  .vw-input-pill,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 a {
   color: var(--vw-purple-light);
   text-decoration: none;
