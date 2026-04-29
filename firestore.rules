@@ -9,6 +9,20 @@ service cloud.firestore {
              || session.Participant2 == request.auth.uid;
     }
 
+    // Used by the post-migration "claim orphan messages" flow. A UserID is
+    // "orphan" once its owner is no longer in either participant slot of
+    // its session — happens after a Phase 2.17 active hand-off where the
+    // old UID is replaced with the new device's UID. The new device, on
+    // first sight of those messages, rewrites UserID to its own UID so the
+    // chat view's fromMe detection / unsend / auto-vanish rules behave
+    // correctly. Before migration this is always false (old UID is still
+    // a participant), so attempts to "rewrite UserID" pre-migration get
+    // rejected.
+    function isOrphanUserID(sessionID, oldUid) {
+      let s = get(/databases/$(database)/documents/ChatSessions/$(sessionID)).data;
+      return s.Participant1 != oldUid && s.Participant2 != oldUid;
+    }
+
     // Helper used by ChatMessages cascade delete: only the AGREER (the
     // participant who isn't the one who requested deletion) can hard-delete
     // messages, and only while a delete request is pending. This keeps a
@@ -83,6 +97,60 @@ service cloud.firestore {
                         && !('DeleteRequestedBy' in request.resource.data)
                         && !('DeleteRequestedAt' in request.resource.data)
                       )
+                      ||
+                      // (d) Phase 2.17 — own-slot migration. Swap own
+                      // Participant slot to a new UID and update the
+                      // matching WrappedKey to one re-wrapped for the new
+                      // UID's RSA public key. The session AES key itself
+                      // doesn't change — the OTHER party's WrappedKey stays
+                      // valid, so they keep being able to decrypt every
+                      // message; only the outer RSA wrap that protects MY
+                      // copy of the session key gets reissued. The other
+                      // slot is untouched.
+                      //
+                      // Required keys: Participant{1|2}, WrappedKey{1|2},
+                      // UpdatedAt. LastMessageBy is optionally rewritten
+                      // ONLY when the current LastMessageBy was me (so the
+                      // new device's home unread dot doesn't light up on
+                      // sessions where I sent the last pre-migration
+                      // message). New UID must exist in Users (else the
+                      // session would strand on a non-existent UID) and
+                      // must not equal the other current participant
+                      // (no degenerate self-chat).
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasAll(['Participant1', 'WrappedKey1', 'UpdatedAt'])
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Participant1', 'WrappedKey1', 'UpdatedAt', 'LastMessageBy'])
+                        && resource.data.Participant1 == request.auth.uid
+                        && request.resource.data.Participant1 != request.auth.uid
+                        && request.resource.data.Participant1 != resource.data.Participant2
+                        && exists(/databases/$(database)/documents/Users/$(request.resource.data.Participant1))
+                        && (
+                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['LastMessageBy'])
+                          || (
+                            'LastMessageBy' in resource.data
+                            && resource.data.LastMessageBy == request.auth.uid
+                            && request.resource.data.LastMessageBy == request.resource.data.Participant1
+                          )
+                        )
+                      )
+                      ||
+                      // (d-mirror) Same as (d) but for Participant2.
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasAll(['Participant2', 'WrappedKey2', 'UpdatedAt'])
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Participant2', 'WrappedKey2', 'UpdatedAt', 'LastMessageBy'])
+                        && resource.data.Participant2 == request.auth.uid
+                        && request.resource.data.Participant2 != request.auth.uid
+                        && request.resource.data.Participant2 != resource.data.Participant1
+                        && exists(/databases/$(database)/documents/Users/$(request.resource.data.Participant2))
+                        && (
+                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['LastMessageBy'])
+                          || (
+                            'LastMessageBy' in resource.data
+                            && resource.data.LastMessageBy == request.auth.uid
+                            && request.resource.data.LastMessageBy == request.resource.data.Participant2
+                          )
+                        )
+                      )
                     );
       allow delete: if request.auth != null
                     && (resource.data.Participant1 == request.auth.uid
@@ -138,6 +206,23 @@ service cloud.firestore {
                       // (d) either participant toggles a reaction
                       (
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Reactions'])
+                      )
+                      ||
+                      // (e) Phase 2.17 — claim orphan UserID after a
+                      // session migration. Rewrite UserID = my UID for
+                      // messages whose current UserID is no longer in
+                      // either participant slot of the session (i.e. the
+                      // previous owner migrated out). Constrained to a
+                      // single-field UserID write where the new value is
+                      // my UID; the outer guard already requires me to be
+                      // a participant of the session, and isOrphanUserID()
+                      // ensures we can only claim "abandoned" messages,
+                      // not steal each other's authorship in a live chat.
+                      (
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['UserID'])
+                        && resource.data.UserID != request.auth.uid
+                        && request.resource.data.UserID == request.auth.uid
+                        && isOrphanUserID(resource.data.SessionID, resource.data.UserID)
                       )
                     );
       // Hard delete only by the AGREER during a pending session deletion

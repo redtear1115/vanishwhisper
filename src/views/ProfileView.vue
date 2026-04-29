@@ -199,6 +199,18 @@ function isDirty(): boolean {
 
         <p v-if="error" class="vw-text-danger">{{ error }}</p>
       </div>
+
+      <div class="section-label">Account</div>
+
+      <div class="vw-card">
+        <p class="hint">
+          Switching to a new device? Move your sessions and message history over before you stop
+          using this one — accounts can't be recovered after the fact.
+        </p>
+        <div class="uid-actions">
+          <router-link to="/migrate" class="copy-btn">Move account to another device</router-link>
+        </div>
+      </div>
     </div>
   </div>
 </template>

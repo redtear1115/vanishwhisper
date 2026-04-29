@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getIdentity } from '../identity'
 import { markVisited, sessionDisplay, setHidden, setLabel, useLabels } from '../labels'
+import { claimOrphanMessages } from '../migration'
 import {
   deleteMessage,
   markDeleted,
@@ -202,6 +203,11 @@ onMounted(async () => {
       (rows) => {
         messages.value = rows
         ackUnread(rows)
+        // Post-migration cleanup. claimOrphanMessages() short-circuits to a
+        // no-op once it has seen this session in this process lifetime AND
+        // confirmed there are no orphan UIDs to claim — so the steady-state
+        // cost is one Set lookup per snapshot tick.
+        void claimOrphanMessages(props.id, rows, session.otherParticipant)
       },
       (err) => {
         error.value = err instanceof Error ? err.message : String(err)
