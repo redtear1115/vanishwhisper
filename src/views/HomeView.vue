@@ -51,11 +51,15 @@ const archivedSessions = computed(() =>
 //   - latest message exists AND
 //   - it was sent by the OTHER party AND
 //   - it landed AFTER my last visit (with a 2 s clock-skew buffer between
-//     server and local clocks)
+//     server and local clocks) AND
+//   - the session isn't client-side-hidden — hide is meant to make a chat
+//     visually disappear from your attention, including the home dot.
 function hasUnread(s: ChatSessionRow): boolean {
   if (!identity.value) return false
   if (!s.lastMessageBy || s.lastMessageBy === identity.value.uid) return false
-  const lastSeen = labels.value.get(s.id)?.lastSeenAt ?? 0
+  const label = labels.value.get(s.id)
+  if (label?.hidden) return false
+  const lastSeen = label?.lastSeenAt ?? 0
   const updated = s.updatedAt?.getTime() ?? 0
   return updated > lastSeen + 2000
 }

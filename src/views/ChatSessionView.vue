@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getIdentity } from '../identity'
-import { markVisited, sessionDisplay, setLabel, setSessionState, useLabels } from '../labels'
+import { markVisited, sessionDisplay, setHidden, setLabel, setSessionState, useLabels } from '../labels'
 import {
   deleteMessage,
   markDeleted,
@@ -250,7 +250,14 @@ watch([myMinutes, otherMinutes], () => {
   progressStyleCache.clear()
 })
 
+// Skip while the chat is client-side-hidden: writing ReadAt would start the
+// vanish timer for messages the user explicitly chose not to look at, so
+// hidden mode acts as a soft pause on Read & Vanish. When the user toggles
+// back to visible, the watcher below reruns this on the current row set so
+// anything that piled up while hidden gets acked exactly as if the user had
+// just opened the chat.
 function ackUnread(rows: ChatMessageRow[]): void {
+  if (sessionHidden.value) return
   for (const m of rows) {
     if (m.fromMe || m.readAt || m.deletedAt || readFired.has(m.id)) continue
     readFired.add(m.id)
@@ -274,9 +281,14 @@ function isVanished(m: ChatMessageRow, atMs: number): boolean {
   return at !== null && atMs >= at
 }
 
-const visibleMessages = computed(() =>
-  messages.value.filter((m) => !isVanished(m, now.value)),
-)
+// Drop the entire row set while hidden so the message container falls
+// through to the same `No messages yet — say hi.` placeholder a brand-new
+// chat shows. Keeping `messages.value` populated underneath means tickVanish
+// + the un-hide ackUnread replay still see the real data.
+const visibleMessages = computed(() => {
+  if (sessionHidden.value) return []
+  return messages.value.filter((m) => !isVanished(m, now.value))
+})
 
 function tickVanish(): void {
   for (const m of messages.value) {
@@ -656,6 +668,37 @@ async function toggleSessionState(target: 'pinned' | 'archived'): Promise<void> 
   }
 }
 
+// Per-session client-side hide. Local-only (labels.ts → IDB) — the other
+// party doesn't know we hid them. While hidden the message list and input
+// bar are replaced by the same empty-state placeholder a brand-new chat
+// shows, so a glance at the screen looks like an empty conversation rather
+// than a deliberately hidden one.
+const sessionHidden = computed(() => labels.value.get(props.id)?.hidden === true)
+
+async function onMenuToggleHide(): Promise<void> {
+  menuOpen.value = false
+  error.value = null
+  try {
+    await setHidden(props.id, !sessionHidden.value)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// On hide-on, drop any in-progress reply chip — the input bar is about to
+// disappear and a stale replyTo would resurface attached to the next thing
+// the user composes after un-hiding. On hide-off, replay ackUnread against
+// the current row set so messages received during the hidden window get
+// marked read now (subscribeMessages's callback already ran while we were
+// suppressing, so we have to manually reconcile).
+watch(sessionHidden, (hidden) => {
+  if (hidden) {
+    replyTo.value = null
+  } else {
+    ackUnread(messages.value)
+  }
+})
+
 async function onAgreeDelete(): Promise<void> {
   error.value = null
   deleting.value = true
@@ -703,6 +746,11 @@ async function onAgreeDelete(): Promise<void> {
           class="header-menu-item"
           @click="toggleSessionState('archived')"
         >{{ sessionState === 'archived' ? 'Unarchive' : 'Archive' }}</button>
+        <button
+          type="button"
+          class="header-menu-item"
+          @click="onMenuToggleHide"
+        >{{ sessionHidden ? 'Show messages' : 'Hide messages' }}</button>
         <button
           v-if="deleteRequestState === 'none'"
           type="button"
@@ -961,8 +1009,9 @@ async function onAgreeDelete(): Promise<void> {
       >×</button>
     </div>
 
-    <!-- Input bar -->
-    <form v-if="opened" class="input-bar" @submit.prevent="send">
+    <!-- Input bar. Drops out while sessionHidden so a glance at the screen
+         shows the same neutral empty state a brand-new chat would. -->
+    <form v-if="opened && !sessionHidden" class="input-bar" @submit.prevent="send">
       <button
         type="button"
         class="attach-btn"

@@ -17,6 +17,14 @@ export interface SessionLabel {
   // session.LastMessageBy + UpdatedAt this drives the home unread dot:
   // unread = LastMessageBy is the OTHER party AND UpdatedAt > lastSeenAt.
   lastSeenAt?: number
+  // Per-session client-side hide. When true: chat view renders the same
+  // empty-state placeholder as a brand-new session (no message rows, no
+  // input bar) AND ackUnread is suppressed so incoming messages don't get
+  // ReadAt — vanish stays paused until the user toggles back to visible.
+  // Visually indistinguishable from an empty conversation, by design (the
+  // user wants plausible deniability if someone glances at the screen).
+  // Independent of state (pinned/archived) so you can pin AND hide.
+  hidden?: boolean
 }
 
 interface LabelRow extends SessionLabel {
@@ -77,6 +85,15 @@ export async function markVisited(sessionId: string): Promise<void> {
   await mergePrefs(sessionId, (current) => ({ ...current, lastSeenAt: Date.now() }))
 }
 
+export async function setHidden(sessionId: string, hidden: boolean): Promise<void> {
+  await mergePrefs(sessionId, (current) => {
+    const next: SessionLabel = { ...current }
+    if (hidden) next.hidden = true
+    else delete next.hidden
+    return next
+  })
+}
+
 // Read-merge-write inside one IDB transaction so concurrent calls for the
 // same session don't lose updates (mount fires markVisited at the same
 // moment a Pin click fires setSessionState — both should land). Drops the
@@ -128,6 +145,7 @@ function isEmpty(label: SessionLabel): boolean {
     !label.sessionName &&
     !label.otherName &&
     !label.state &&
+    !label.hidden &&
     label.lastSeenAt === undefined
   )
 }
