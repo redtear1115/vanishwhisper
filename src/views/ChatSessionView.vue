@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import ChatMessageBubble from '../components/ChatMessageBubble.vue'
 import { getIdentity } from '../identity'
 import { markVisited, sessionDisplay, setHidden, setLabel, useLabels } from '../labels'
 import { claimOrphanMessages } from '../migration'
 import {
   deleteMessage,
-  markDeleted,
   markRead,
   sendImageMessage,
   sendMessage,
@@ -15,7 +15,7 @@ import {
   toggleReaction,
   type ChatMessageRow,
 } from '../messages'
-import { STICKERS, stickerUrl } from '../stickers'
+import { STICKERS } from '../stickers'
 import {
   agreeDeleteSession,
   cancelDeleteSession,
@@ -26,8 +26,7 @@ import {
   type SessionMeta,
 } from '../sessions'
 import { subscribeDeletedInMinutes } from '../users'
-
-const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
+import { useVanish } from '../useVanish'
 
 const props = defineProps<{ id: string }>()
 const { labels } = useLabels()
@@ -59,12 +58,20 @@ const deleteRequestState = computed<DeleteRequestState>(() => {
   if (!requestedBy) return 'none'
   return requestedBy === opened.value?.myUid ? 'mine' : 'theirs'
 })
-const now = ref(Date.now())
 const myMinutes = ref<number | null>(null)
 const otherMinutes = ref<number | null>(null)
 
+// Read-and-vanish math + 1-Hz tick + auto markDeleted firing all live in
+// useVanish — see its top-of-file comment for the boundary. Caller still
+// owns the minutes subscriptions (below) so this view's error.value can
+// surface Firestore failures the way the rest of the view does.
+const { isVanished, vanishLabel, progressStyle, showProgress } = useVanish({
+  messages,
+  myMinutes,
+  otherMinutes,
+})
+
 const readFired = new Set<string>()
-const deletedFired = new Set<string>()
 const pickerOpenFor = ref<string | null>(null)
 
 // Reply / quote target. When non-null, the next sent text/sticker/image
@@ -160,7 +167,6 @@ let unsub: (() => void) | null = null
 let unsubMyMinutes: (() => void) | null = null
 let unsubOtherMinutes: (() => void) | null = null
 let unsubSession: (() => void) | null = null
-let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   try {
@@ -213,10 +219,6 @@ onMounted(async () => {
         error.value = err instanceof Error ? err.message : String(err)
       },
     )
-    timer = setInterval(() => {
-      now.value = Date.now()
-      tickVanish()
-    }, 1000)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -236,7 +238,6 @@ onUnmounted(() => {
   unsubMyMinutes?.()
   unsubOtherMinutes?.()
   unsubSession?.()
-  if (timer !== null) clearInterval(timer)
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onDocumentKeydown)
   // Defensive: if the user navigates away with the lightbox still open,
@@ -245,15 +246,6 @@ onUnmounted(() => {
   // Persist a fresh lastSeenAt covering the whole visit — anything that
   // arrived while the user was reading is now considered seen.
   void markVisited(props.id)
-})
-
-// When either side's vanish window updates, blow away the progress-line
-// cache so existing messages recompute their CSS animation duration. The
-// cache is keyed by (messageId, readAt) which doesn't include minutes, so
-// without this the in-flight animation would keep its original duration
-// even after Vue re-renders the inline style.
-watch([myMinutes, otherMinutes], () => {
-  progressStyleCache.clear()
 })
 
 // Per-session client-side hide. Local-only (labels.ts → IDB) — the other
@@ -310,41 +302,14 @@ function ackUnread(rows: ChatMessageRow[]): void {
   }
 }
 
-function vanishAtMs(m: ChatMessageRow): number | null {
-  if (!m.readAt) return null
-  const minutes = m.fromMe ? otherMinutes.value : myMinutes.value
-  if (minutes === null) return null
-  return m.readAt.getTime() + minutes * 60_000
-}
-
-function isVanished(m: ChatMessageRow, atMs: number): boolean {
-  if (m.deletedAt) return true
-  const at = vanishAtMs(m)
-  return at !== null && atMs >= at
-}
-
 // Drop the entire row set while hidden so the message container falls
 // through to the same `No messages yet — say hi.` placeholder a brand-new
-// chat shows. Keeping `messages.value` populated underneath means tickVanish
-// + the un-hide ackUnread replay still see the real data.
+// chat shows. Keeping `messages.value` populated underneath means useVanish's
+// tick + the un-hide ackUnread replay still see the real data.
 const visibleMessages = computed(() => {
   if (sessionHidden.value) return []
-  return messages.value.filter((m) => !isVanished(m, now.value))
+  return messages.value.filter((m) => !isVanished(m))
 })
-
-function tickVanish(): void {
-  for (const m of messages.value) {
-    if (m.fromMe || m.deletedAt || deletedFired.has(m.id)) continue
-    const at = vanishAtMs(m)
-    if (at !== null && now.value >= at) {
-      deletedFired.add(m.id)
-      markDeleted(m.id).catch((err) => {
-        deletedFired.delete(m.id)
-        console.error('markDeleted failed', err)
-      })
-    }
-  }
-}
 
 async function send(): Promise<void> {
   if (!opened.value || !draft.value.trim()) return
@@ -428,84 +393,6 @@ watch(visibleMessages, async () => {
   scrollToBottom()
 })
 
-// Bucketed vanish text. CEIL-based rounding so the very first label after
-// readAt matches the user's configured value (1h setting → "vanishes in 1h"
-// from frame one). Floor-based rounding would slot a sub-60-min remaining
-// into the 15-min bucket and round it down to "45m" before the user even
-// sees the message land — confusing.
-//
-// Semantics: each label means "AT MOST this much remaining". Coarser
-// precision as remaining grows so most ticks render the same string and
-// Vue's diff skips the DOM update — only the final minute (sub-60s bucket)
-// actually re-paints per second. The CSS-animated line below the bubble
-// carries the smooth per-second visual signal.
-//
-//   <60s    → seconds        ("45s"),  60s rounds up to "1m"
-//   1m–5m   → whole minutes  ("4m")
-//   5m–15m  → 5-min steps    ("10m")
-//   15m–1h  → 15-min steps   ("45m"),  60m rounds up to "1h"
-//   ≥1h     → whole hours    ("2h")
-function vanishLabel(m: ChatMessageRow): string {
-  const at = vanishAtMs(m)
-  if (at === null) return 'unread'
-  const remaining = Math.max(0, at - now.value)
-  if (remaining < 60_000) {
-    const s = Math.ceil(remaining / 1000)
-    return s >= 60 ? 'vanishes in 1m' : `vanishes in ${s}s`
-  }
-  if (remaining < 5 * 60_000) {
-    return `vanishes in ${Math.ceil(remaining / 60_000)}m`
-  }
-  if (remaining < 15 * 60_000) {
-    return `vanishes in ${Math.ceil(remaining / 60_000 / 5) * 5}m`
-  }
-  if (remaining < 60 * 60_000) {
-    const v = Math.ceil(remaining / 60_000 / 15) * 15
-    return v >= 60 ? 'vanishes in 1h' : `vanishes in ${v}m`
-  }
-  return `vanishes in ${Math.ceil(remaining / 3_600_000)}h`
-}
-
-// Horizontal vanish line — driven entirely by CSS keyframes so the browser
-// can run it on the compositor without JS ticks. We feed in two values that
-// don't change for the lifetime of the message:
-//   - animationDuration = the recipient's full vanish window (total lifetime)
-//   - animationDelay    = NEGATIVE elapsed since readAt, which jumps the
-//                         animation forward so a message read 10 min ago in
-//                         a 60-min window starts the line at the 10/60 point.
-// We memoise per (messageId, readAt) so the style object's identity is
-// stable across Vue re-renders — the inline style only "changes" the moment
-// readAt transitions null → set, and the keyframe runs uninterrupted from
-// that point. The cache is component-local so a remount (navigate away and
-// back) recomputes elapsed against the current Date.now(), avoiding stale
-// offsets.
-const progressStyleCache = new Map<
-  string,
-  { animationDuration: string; animationDelay: string }
->()
-
-function progressStyle(m: ChatMessageRow): Record<string, string> {
-  if (!m.readAt) return { display: 'none' }
-  const minutes = m.fromMe ? otherMinutes.value : myMinutes.value
-  if (minutes === null) return { display: 'none' }
-  const key = `${m.id}:${m.readAt.getTime()}`
-  let style = progressStyleCache.get(key)
-  if (!style) {
-    const totalMs = minutes * 60_000
-    const elapsedMs = Math.max(0, Date.now() - m.readAt.getTime())
-    style = {
-      animationDuration: `${totalMs}ms`,
-      animationDelay: `-${elapsedMs}ms`,
-    }
-    progressStyleCache.set(key, style)
-  }
-  return style
-}
-
-function showProgress(m: ChatMessageRow): boolean {
-  return Boolean(m.readAt) && !isVanished(m, now.value)
-}
-
 // Adjacent visible messages with the same sender and the same bucketed vanish
 // label are visually a "group" — they share one progress line and one meta row
 // at the bottom so the screen isn't repeating "vanishes in 30m" three times in
@@ -522,23 +409,6 @@ function isLastOfGroup(idx: number): boolean {
   return vanishLabel(next) !== vanishLabel(m)
 }
 
-function iReacted(m: ChatMessageRow, emoji: string): boolean {
-  if (!opened.value) return false
-  return m.reactions[emoji]?.includes(opened.value.myUid) ?? false
-}
-
-function reactionCount(m: ChatMessageRow, emoji: string): number {
-  return m.reactions[emoji]?.length ?? 0
-}
-
-async function onReact(messageId: string, emoji: string, hasMine: boolean): Promise<void> {
-  try {
-    await toggleReaction(messageId, emoji, hasMine)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  }
-}
-
 // Picker is one-shot: clicking an emoji toggles the reaction and closes
 // the picker. Combined with click-outside-closes (document listener below)
 // this means there's no explicit "close" button — the picker behaves like
@@ -549,7 +419,11 @@ async function onReactAndClose(
   hasMine: boolean,
 ): Promise<void> {
   pickerOpenFor.value = null
-  await onReact(messageId, emoji, hasMine)
+  try {
+    await toggleReaction(messageId, emoji, hasMine)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
 }
 
 // Document-level click handler closes any open picker AND the header
@@ -837,129 +711,26 @@ async function onAgreeDelete(): Promise<void> {
       <p v-if="visibleMessages.length === 0" class="chat-empty">
         No messages yet — say hi.
       </p>
-      <div
+      <ChatMessageBubble
         v-for="(m, idx) in visibleMessages"
         :key="m.id"
-        :data-mid="m.id"
-        class="msg-row"
-        :class="[
-          m.fromMe ? 'msg-me' : 'msg-them',
-          isLastOfGroup(idx) ? 'group-end' : 'group-mid',
-          { pulse: pulseMid === m.id },
-        ]"
-      >
-        <!-- Quote strip — appears above the bubble whenever this message
-             replies to another. Clicking jumps to and pulses the original.
-             Renders even if the target has vanished (snippet helper shows
-             the placeholder), so the conversational thread is preserved
-             visually even after the original disappears. Pure typographic
-             treatment: indent + thin border-left + muted text colour. No
-             icon prefix — the indented quote-block convention reads as
-             "quoted text" without a glyph. -->
-        <button
-          v-if="m.replyTo"
-          type="button"
-          class="reply-jump"
-          :title="findReplyTarget(m.replyTo) ? 'Jump to original' : 'Original message has vanished'"
-          @click.stop="jumpToReply(m.replyTo)"
-        >
-          <span class="reply-jump-snippet">{{ replySnippet(findReplyTarget(m.replyTo)) }}</span>
-        </button>
-
-        <!-- Bubble (per-message). Unsend lives inside the bubble as a hover
-             affordance so even mid-group messages can be unsent — the shared
-             meta row below carries no per-message controls. Sticker / image /
-             text are mutually exclusive in the UI (the input bar offers them
-             via separate paths), so v-else-if down the chain. -->
-        <div
-          class="msg-bubble"
-          :class="[
-            m.fromMe ? 'vw-bubble-me' : 'vw-bubble-them',
-            { 'has-image': m.attachment, 'has-sticker': m.sticker },
-          ]"
-        >
-          <!-- Reply trigger — inbound bubbles only. Quoting your own
-               outbound message is intentionally not offered: the action is
-               about responding to the OTHER party's text, and exposing it
-               on outbound bubbles clutters the hover cluster without a
-               real use case in a 2-party chat. Hover-revealed on the
-               OPPOSITE side from react/unsend so the two don't collide. -->
-          <button
-            v-if="!m.fromMe"
-            class="bubble-reply"
-            type="button"
-            title="Reply"
-            @click.stop="startReply(m)"
-          >↩</button>
-          <template v-if="m.sticker">
-            <img
-              v-if="stickerUrl(m.sticker)"
-              :src="stickerUrl(m.sticker)!"
-              class="msg-sticker"
-              alt=""
-            />
-            <span v-else class="decrypt-err">[unknown sticker: {{ m.sticker }}]</span>
-          </template>
-          <img
-            v-else-if="m.attachment?.blobUrl"
-            :src="m.attachment.blobUrl"
-            :width="m.attachment.width"
-            :height="m.attachment.height"
-            class="msg-image"
-            alt=""
-            @click.stop="openLightbox(m.attachment!.blobUrl!)"
-          />
-          <span v-else-if="m.attachment" class="decrypt-err">[unable to decrypt image]</span>
-          <span v-if="m.text">{{ m.text }}</span>
-          <span v-else-if="m.text === null" class="decrypt-err">[unable to decrypt]</span>
-          <button
-            v-if="m.fromMe"
-            class="bubble-delete"
-            type="button"
-            title="Unsend"
-            @click.stop="onDelete(m.id)"
-          >×</button>
-          <!-- Reaction picker trigger — only on inbound messages, hover-revealed
-               like the unsend button. Stops propagation so the document
-               click-outside handler doesn't immediately re-close the picker. -->
-          <button
-            v-if="!m.fromMe"
-            class="bubble-react"
-            type="button"
-            title="React"
-            @click.stop="pickerOpenFor = m.id"
-          >+</button>
-        </div>
-
-        <!-- Shared progress line + meta row — only on the LAST message of a
-             grouped run. Same-bucket adjacent messages from the same sender
-             collapse into one visual indicator instead of N. -->
-        <div v-if="isLastOfGroup(idx) && showProgress(m)" class="msg-progress">
-          <div class="msg-progress-fill" :style="progressStyle(m)" />
-        </div>
-        <div v-if="isLastOfGroup(idx)" class="msg-meta">
-          <span class="msg-time">{{ m.createdAt?.toLocaleTimeString() ?? '…' }}</span>
-          <span class="vw-pill" :class="{ 'vw-pill--live': m.readAt }">{{ vanishLabel(m) }}</span>
-        </div>
-
-        <!-- Reactions row — existing pills always visible (with counts). The
-             picker (extra emoji choices) is opened from the bubble's hover
-             "+" button, not from the row itself. .stop on each pill so a
-             toggle doesn't bubble out and trigger the click-outside close. -->
-        <div class="reactions-row">
-          <button
-            v-for="emoji in REACTION_EMOJIS"
-            v-show="reactionCount(m, emoji) > 0 || (!m.fromMe && pickerOpenFor === m.id)"
-            :key="emoji"
-            type="button"
-            class="reaction-pill"
-            :class="{ mine: iReacted(m, emoji) }"
-            @click.stop="onReactAndClose(m.id, emoji, iReacted(m, emoji))"
-          >
-            {{ emoji }}<span v-if="reactionCount(m, emoji) > 0" class="reaction-count"> {{ reactionCount(m, emoji) }}</span>
-          </button>
-        </div>
-      </div>
+        :message="m"
+        :my-uid="opened.myUid"
+        :is-last-of-group="isLastOfGroup(idx)"
+        :show-progress="showProgress(m)"
+        :progress-style="progressStyle(m)"
+        :vanish-label="vanishLabel(m)"
+        :pulse="pulseMid === m.id"
+        :picker-open="pickerOpenFor === m.id"
+        :reply-target="m.replyTo ? findReplyTarget(m.replyTo) : undefined"
+        :reply-snippet="m.replyTo ? replySnippet(findReplyTarget(m.replyTo)) : ''"
+        @delete="onDelete(m.id)"
+        @react="(emoji, hasMine) => onReactAndClose(m.id, emoji, hasMine)"
+        @reply="startReply(m)"
+        @picker-open="pickerOpenFor = m.id"
+        @jump="jumpToReply"
+        @lightbox="openLightbox"
+      />
     </div>
 
     <!-- Lightbox overlay — teleported to body so it escapes any parent
@@ -1335,146 +1106,6 @@ async function onAgreeDelete(): Promise<void> {
 .chat-messages::-webkit-scrollbar-track { background: transparent; }
 .chat-messages::-webkit-scrollbar-thumb { background: var(--vw-border2); border-radius: 2px; }
 
-.msg-row {
-  display: flex;
-  flex-direction: column;
-  max-width: 75%;
-  gap: 4px;
-}
-.msg-me   { align-self: flex-end; align-items: flex-end; }
-.msg-them { align-self: flex-start; align-items: flex-start; }
-/* Extra breathing room after the LAST message of a group so the shared meta
-   row clearly belongs to the group above and the next group starts visibly
-   apart. group-mid messages stay tight against their siblings. */
-.msg-row.group-end { margin-bottom: 10px; }
-.msg-row.group-end:last-child { margin-bottom: 0; }
-
-.decrypt-err { color: var(--vw-danger); font-style: italic; }
-
-/* ── Vanish progress line ──
-   A 2px track with a mint fill that depletes via a single CSS keyframe.
-   The fill's animationDuration (= total lifetime) and animationDelay
-   (= NEGATIVE elapsed since readAt) come from progressStyle() inline, so
-   the browser drives the animation on the compositor without per-second JS
-   updates — see the long comment in the script section. The line spans the
-   whole message-row column (75% viewport max) rather than fitting the
-   bubble; it reads as a divider between bubble and meta as well as a
-   countdown indicator. */
-.msg-progress {
-  width: 100%;
-  height: 2px;
-  background: var(--vw-border);
-  border-radius: 1px;
-  overflow: hidden;
-}
-.msg-progress-fill {
-  height: 100%;
-  width: 100%;
-  background: var(--vw-green-strong);
-  animation-name: msg-deplete;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-@keyframes msg-deplete {
-  to { width: 0; }
-}
-
-/* ── Meta ── */
-.msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.msg-time {
-  font-size: 10px;
-  color: var(--vw-text3);
-}
-
-/* Per-bubble unsend — lives inside the bubble (hence position:relative on
-   `.msg-bubble` below) so even mid-group messages can be unsent without
-   a meta row. Hidden by default; revealed on hover. Touch users without
-   hover lose discoverability — acceptable trade for desktop cleanness in
-   the current phase. */
-.msg-bubble { position: relative; }
-.bubble-delete {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--vw-surface);
-  border: 0.5px solid var(--vw-border2);
-  color: var(--vw-text3);
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-}
-.msg-bubble:hover .bubble-delete { opacity: 1; }
-.bubble-delete:hover { color: var(--vw-danger); }
-
-/* Reaction picker trigger — same hover affordance pattern as bubble-delete,
-   on the opposite role (inbound only). Top-right of the bubble; absolute
-   so the bubble keeps its content-shrink width. */
-.bubble-react {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--vw-surface);
-  border: 0.5px solid var(--vw-border2);
-  color: var(--vw-text3);
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-}
-.msg-bubble:hover .bubble-react { opacity: 1; }
-.bubble-react:hover { color: var(--vw-purple-pale); }
-
-/* ── Reactions ── */
-.reactions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.reaction-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 99px;
-  border: 0.5px solid var(--vw-border2);
-  background: var(--vw-surface2);
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-  color: var(--vw-text);
-}
-.reaction-pill:hover { border-color: var(--vw-purple-light); }
-/* "Mine" pills go mint instead of purple — splash of secondary colour to
-   break up the otherwise all-purple chat. */
-.reaction-pill.mine {
-  border-color: var(--vw-green-strong);
-  background: color-mix(in srgb, var(--vw-green-strong) 15%, transparent);
-}
-
-.reaction-count {
-  font-size: 11px;
-  color: var(--vw-text2);
-  margin-left: 2px;
-}
-
-
 /* ── Input bar ── */
 .input-bar {
   display: flex;
@@ -1570,44 +1201,6 @@ async function onAgreeDelete(): Promise<void> {
   display: block;
 }
 
-/* ── Image attachments inside bubbles ── */
-.msg-image {
-  display: block;
-  max-width: min(320px, 100%);
-  max-height: 320px;
-  width: auto;
-  height: auto;
-  border-radius: 10px;
-  background: var(--vw-surface);
-  cursor: zoom-in;
-}
-/* Image-only bubbles: drop the bubble's chrome so the image looks like the
-   bubble itself. Keeps the rounded corners from the bubble class but
-   removes the surrounding padding/background that would look like a frame. */
-.msg-bubble.has-image {
-  padding: 4px;
-  background: transparent;
-  border: none;
-}
-.msg-bubble.has-image .msg-image {
-  border-radius: 12px;
-}
-
-/* ── Stickers inside bubbles ── */
-.msg-sticker {
-  display: block;
-  width: 160px;
-  height: 160px;
-  object-fit: contain;
-}
-/* Sticker-only bubbles: same chrome-strip treatment as has-image so the
-   transparent PNG floats free instead of sitting on a coloured rectangle. */
-.msg-bubble.has-sticker {
-  padding: 0;
-  background: transparent;
-  border: none;
-}
-
 /* ── Lightbox ── */
 .lightbox {
   position: fixed;
@@ -1661,106 +1254,12 @@ async function onAgreeDelete(): Promise<void> {
   background: color-mix(in srgb, var(--vw-text) 20%, transparent);
 }
 
-/* ── Reply / quote ──
-   Three pieces work together:
-   (1) `.bubble-reply` — hover-revealed ↩ on the OPPOSITE corner from
-       delete/react, sized identically so the clusters look uniform.
-   (2) `.reply-jump` — quote strip above a bubble that itself replies to
-       another message. Click → smooth-scroll + pulse the original.
-   (3) `.reply-preview` — chip above the input bar showing what the next
-       send will quote, with × to cancel.
-
-   The pulse keyframe applies a brief outline ring on the bubble inside the
-   target row when the user clicks a jump; the ring uses box-shadow rather
-   than background-color so it composes cleanly with the bubble's own
-   purple/dark fill instead of overriding it. */
-.bubble-reply {
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--vw-surface);
-  border: 0.5px solid var(--vw-border2);
-  color: var(--vw-text3);
-  font-size: 11px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-}
-.msg-bubble:hover .bubble-reply { opacity: 1; }
-.bubble-reply:hover { color: var(--vw-purple-pale); }
-/* Touch devices have no hover, so hover-only reveals are invisible there.
-   Reveal the action cluster (reply / react / unsend) at low opacity so the
-   user can find it, and full opacity when the bubble is tapped (focus-within
-   covers the active touch). Mirror the same rule to the existing delete /
-   react buttons so the cluster behaves consistently. */
-@media (hover: none) {
-  .bubble-reply,
-  .bubble-react,
-  .bubble-delete {
-    opacity: 0.55;
-  }
-  .msg-bubble:focus-within .bubble-reply,
-  .msg-bubble:focus-within .bubble-react,
-  .msg-bubble:focus-within .bubble-delete {
-    opacity: 1;
-  }
-}
-
-/* Quote strip — pure typographic treatment. A 2px left rule + a small
-   indent + secondary text colour reads as "this is quoted" without any
-   icon or chip background, matching how indented-quote blocks work in
-   prose. Hover brightens the rule so the click affordance is still
-   discoverable. The strip mirrors to the right edge for outbound rows
-   so the rule visually "points at" the bubble below it. */
-.reply-jump {
-  background: none;
-  border: none;
-  border-left: 2px solid var(--vw-border2);
-  border-radius: 0;
-  padding: 1px 0 1px 8px;
-  max-width: 100%;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  display: block;
-  transition: border-color 0.15s, color 0.15s;
-}
-.reply-jump:hover { border-left-color: var(--vw-purple-light); }
-.msg-me .reply-jump {
-  border-left: none;
-  border-right: 2px solid var(--vw-border2);
-  padding: 1px 8px 1px 0;
-  text-align: right;
-}
-.msg-me .reply-jump:hover { border-right-color: var(--vw-purple-light); }
-.reply-jump-snippet {
-  display: block;
-  font-size: 12px;
-  color: var(--vw-text2);
-  max-width: 240px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-@keyframes msg-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  35%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--vw-purple-light) 35%, transparent); }
-}
-.msg-row.pulse > .msg-bubble {
-  animation: msg-pulse 1.5s ease-in-out;
-}
-
-/* Reply preview — same typographic language as .reply-jump, just laid out
-   horizontally to fit the input bar's row. Indent + thin rule + muted
-   text; no big chip background, no author label (in a 2-party chat where
-   you can only quote the other side, "replying to them" is implicit from
-   the chip's existence). The × is the only affordance. */
+/* Reply preview — typographic kin to ChatMessageBubble's `.reply-jump`
+   quote strip, just laid out horizontally to fit the input bar's row.
+   Indent + thin rule + muted text; no big chip background, no author
+   label (in a 2-party chat where you can only quote the other side,
+   "replying to them" is implicit from the chip's existence). The × is
+   the only affordance. */
 .reply-preview {
   display: flex;
   align-items: center;
