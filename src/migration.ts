@@ -41,7 +41,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore'
-import { base64ToBytes, bytesToBase64 } from './codec'
+import { base64ToBytes, bytesToBase64, importRsaPublicKey } from './codec'
 import { db } from './firebase'
 import { getIdentity } from './identity'
 import { exportLabels, importLabels, type LabelExport } from './labels'
@@ -106,17 +106,6 @@ export async function listMigratableSessions(): Promise<SessionToMigrate[]> {
     out.push({ id: docSnap.id, otherUid: p1 === me.uid ? p2 : p1 })
   }
   return out
-}
-
-async function importRsaPublicKey(spkiBase64: string): Promise<CryptoKey> {
-  const spki = base64ToBytes(spkiBase64)
-  return crypto.subtle.importKey(
-    'spki',
-    spki,
-    { name: 'RSA-OAEP', hash: 'SHA-256' },
-    false,
-    ['encrypt'],
-  )
 }
 
 // Migrate a single session. Idempotent — re-running on an already-migrated

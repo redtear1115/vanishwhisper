@@ -18,7 +18,7 @@ import {
   type Timestamp,
 } from 'firebase/firestore'
 import { onScopeDispose, ref, type Ref } from 'vue'
-import { base64ToBytes, bytesToBase64 } from './codec'
+import { base64ToBytes, bytesToBase64, importRsaPublicKey } from './codec'
 import { db } from './firebase'
 import { getIdentity } from './identity'
 
@@ -294,14 +294,4 @@ async function findExistingSession(
   return aSnap.docs[0]?.id ?? bSnap.docs[0]?.id ?? null
 }
 
-async function importRsaPublicKey(spkiBase64: string): Promise<CryptoKey> {
-  const spki = Uint8Array.from(atob(spkiBase64), (c) => c.charCodeAt(0))
-  return crypto.subtle.importKey(
-    'spki',
-    spki,
-    { name: 'RSA-OAEP', hash: 'SHA-256' },
-    false,
-    ['encrypt'],
-  )
-}
 

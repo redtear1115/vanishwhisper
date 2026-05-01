@@ -163,11 +163,18 @@ export function subscribeMessages(
               blobUrl,
             }
           }
+          let text: string | null = ''
+          if (data.Context) {
+            const bytes = await tryDecryptBytes(sessionKey, data.Context as string)
+            // null is meaningful here — UI renders "[unable to decrypt]"
+            // when text === null (vs empty string for "no Context field").
+            text = bytes ? new TextDecoder().decode(bytes) : null
+          }
           map.set(change.doc.id, {
             id: change.doc.id,
             senderUid,
             fromMe: senderUid === me.uid,
-            text: data.Context ? await tryDecrypt(sessionKey, data.Context as string) : '',
+            text,
             createdAt: (data.CreatedAt as Timestamp | undefined)?.toDate() ?? null,
             readAt: (data.ReadAt as Timestamp | undefined)?.toDate() ?? null,
             deletedAt: (data.DeletedAt as Timestamp | undefined)?.toDate() ?? null,
@@ -233,11 +240,6 @@ export async function toggleReaction(
   const me = getIdentity()
   const op = hasMine ? arrayRemove(me.uid) : arrayUnion(me.uid)
   await updateDoc(doc(db, 'ChatMessages', messageId), new FieldPath('Reactions', emoji), op)
-}
-
-async function tryDecrypt(sessionKey: CryptoKey, contextBase64: string): Promise<string | null> {
-  const bytes = await tryDecryptBytes(sessionKey, contextBase64)
-  return bytes ? new TextDecoder().decode(bytes) : null
 }
 
 // Explicit Uint8Array<ArrayBuffer> return so the result satisfies the strict

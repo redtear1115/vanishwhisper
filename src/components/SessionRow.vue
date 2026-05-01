@@ -314,7 +314,7 @@ onUnmounted(() => {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--vw-bg) 80%, transparent);
 }
 .row-menu-item {
   appearance: none;
