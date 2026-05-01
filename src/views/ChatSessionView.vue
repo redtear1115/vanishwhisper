@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import ChatMessageBubble from '../components/ChatMessageBubble.vue'
 import ChatRenamePanel from '../components/ChatRenamePanel.vue'
 import AppIcon from '../components/AppIcon.vue'
+import DeleteBanner from '../components/DeleteBanner.vue'
+import StickerPicker from '../components/StickerPicker.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import { getIdentity } from '../identity'
 import { markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
@@ -18,7 +20,6 @@ import {
   toggleReaction,
   type ChatMessageRow,
 } from '../messages'
-import { STICKERS } from '../stickers'
 import {
   agreeDeleteSession,
   cancelDeleteSession,
@@ -29,7 +30,9 @@ import {
   type SessionMeta,
 } from '../sessions'
 import { subscribeDeletedInMinutes } from '../users'
+import { useChatScroll } from '../useChatScroll'
 import { useDocumentDismiss } from '../useDocumentDismiss'
+import { useImageLightbox } from '../useImageLightbox'
 import { useVanish } from '../useVanish'
 
 const props = defineProps<{ id: string }>()
@@ -44,12 +47,11 @@ const sendingImage = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const draftInputRef = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
-// Lightbox: when non-null, render a fullscreen overlay showing this blob URL.
-// We hold the URL string directly (not the message id) so the overlay keeps
-// rendering even if the underlying message vanishes mid-view — the blob URL
-// stays valid until subscribeMessages revokes it on next snapshot, which
-// gives the user a moment to dismiss before it goes blank.
-const lightboxUrl = ref<string | null>(null)
+// Image lightbox state + body scroll lock + Esc dismissal live in
+// useImageLightbox. The composable owns its own keydown listener (with
+// onMounted / onUnmounted cleanup) so the chat view doesn't have to
+// thread Esc handling through useDocumentDismiss for it.
+const { lightboxUrl, openLightbox, closeLightbox } = useImageLightbox()
 
 // Session-level metadata (live). Drives the mutual-delete banner and the
 // auto-redirect-to-home when the OTHER party agrees and cascade-deletes
@@ -86,31 +88,6 @@ const replyTo = ref<ChatMessageRow | null>(null)
 // fired by jumpToReply() so the user's eye lands on the original message
 // after the smooth-scroll. Cleared by a setTimeout after the keyframe ends.
 const pulseMid = ref<string | null>(null)
-
-// Auto-scroll: keep the chat pinned to the bottom when the user is already
-// there (so new messages stay visible without manual scroll). If they've
-// scrolled up to read older history, leave their position alone — only
-// resume sticking once they scroll back down. Sending a message also forces
-// stick-to-bottom because the user clearly wants to see what they just sent.
-const messagesContainerRef = ref<HTMLElement | null>(null)
-let stickToBottom = true
-
-function isNearBottom(): boolean {
-  const el = messagesContainerRef.value
-  if (!el) return true
-  const slack = 80 // px — counts as "at bottom" if within this gap
-  return el.scrollTop + el.clientHeight >= el.scrollHeight - slack
-}
-
-function scrollToBottom(): void {
-  const el = messagesContainerRef.value
-  if (!el) return
-  el.scrollTop = el.scrollHeight
-}
-
-function onChatScroll(): void {
-  stickToBottom = isNearBottom()
-}
 
 // Inline rename panel — UI lives in ChatRenamePanel.vue. We hold only
 // the open flag here so other handlers (delete request below) can force
@@ -232,9 +209,8 @@ onUnmounted(() => {
   unsubMyMinutes?.()
   unsubOtherMinutes?.()
   unsubSession?.()
-  // Defensive: if the user navigates away with the lightbox still open,
-  // restore the body scroll lock we set in openLightbox.
-  document.body.style.overflow = ''
+  // (Body scroll lock cleanup for the image lightbox lives in
+  // useImageLightbox's own onUnmounted.)
   // Persist a fresh lastSeenAt covering the whole visit — anything that
   // arrived while the user was reading is now considered seen.
   void markVisited(props.id)
@@ -303,6 +279,15 @@ const visibleMessages = computed(() => {
   return messages.value.filter((m) => !isVanished(m))
 })
 
+// Auto-scroll: keep the chat pinned to the bottom when the user is
+// already there, leave their position alone if they've scrolled up,
+// resume sticking the moment they scroll back down. After a successful
+// send / sticker / image attachment, forceStick() is called so the
+// user always sees what they just shipped — see send() / onPickSticker
+// / onFileSelected below. messagesContainerRef is also reused by
+// jumpToReply() for querySelector inside the scroll viewport.
+const { messagesContainerRef, onScroll: onChatScroll, forceStick } = useChatScroll(visibleMessages)
+
 async function send(): Promise<void> {
   if (!opened.value || !draft.value.trim()) return
   sending.value = true
@@ -316,7 +301,7 @@ async function send(): Promise<void> {
     replyTo.value = null
     // Force stick — even if the user had scrolled up, sending obviously
     // means they want to see what they just sent.
-    stickToBottom = true
+    forceStick()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -343,7 +328,7 @@ async function onPickSticker(stickerKey: string): Promise<void> {
   try {
     await sendStickerMessage(props.id, stickerKey, replyId)
     replyTo.value = null
-    stickToBottom = true
+    forceStick()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -362,7 +347,7 @@ async function onFileSelected(e: Event): Promise<void> {
   try {
     await sendImageMessage(props.id, opened.value.sessionKey, file, replyId)
     replyTo.value = null
-    stickToBottom = true
+    forceStick()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -374,16 +359,6 @@ async function onFileSelected(e: Event): Promise<void> {
     draftInputRef.value?.focus()
   }
 }
-
-// Pin to bottom whenever the visible message list grows / shrinks if the
-// user is sticking. Runs after Vue paints so scrollHeight reflects the new
-// content. Initial mount counts: visibleMessages goes [] → first batch
-// triggers this watcher, which scrolls to the latest immediately on open.
-watch(visibleMessages, async () => {
-  if (!stickToBottom) return
-  await nextTick()
-  scrollToBottom()
-})
 
 // Adjacent visible messages with the same sender and the same bucketed vanish
 // label are visually a "group" — they share one progress line and one meta row
@@ -414,24 +389,12 @@ async function onReactAndClose(messageId: string, emoji: string, hasMine: boolea
   }
 }
 
-// Lightbox open/close. Body scroll is locked while open so the chat
-// doesn't scroll under the overlay when the user wheels on the image
-// (browser pinch-zoom on mobile still works fine).
-function openLightbox(url: string): void {
-  lightboxUrl.value = url
-  document.body.style.overflow = 'hidden'
-}
-
-function closeLightbox(): void {
-  lightboxUrl.value = null
-  document.body.style.overflow = ''
-}
-
 // Outside-click + Esc dismiss for every transient popover in this view.
-// Open triggers and inner content all use @click.stop so anything reaching
-// document is outside by definition — the click handler closes ALL of them
-// without hit-testing. Esc additionally dismisses the lightbox (clicks on
-// it are absorbed by the overlay, so it doesn't need outside-click).
+// Open triggers and inner content all use @click.stop so anything
+// reaching document is outside by definition — the click handler
+// closes ALL of them without hit-testing. The image lightbox handles
+// its own Esc inside useImageLightbox; clicks on it are absorbed by
+// the overlay so it doesn't need outside-click coordination.
 useDocumentDismiss({
   onClickOutside: () => {
     pickerOpenFor.value = null
@@ -439,7 +402,6 @@ useDocumentDismiss({
     stickerPickerOpen.value = false
   },
   onEscape: () => {
-    if (lightboxUrl.value !== null) closeLightbox()
     menuOpen.value = false
     stickerPickerOpen.value = false
   },
@@ -618,33 +580,14 @@ async function onAgreeDelete(): Promise<void> {
     />
 
     <!-- Mutual-delete banner. Two flavours depending on who requested. -->
-    <div v-if="deleteRequestState === 'mine'" class="delete-banner mine">
-      <span>Waiting for the other party to agree to delete this session…</span>
-      <button type="button" class="delete-banner-btn" @click="onCancelOrReject">
-        Cancel request
-      </button>
-    </div>
-    <div v-else-if="deleteRequestState === 'theirs'" class="delete-banner theirs">
-      <span>The other party wants to delete this session and all messages.</span>
-      <div class="delete-banner-actions">
-        <button
-          type="button"
-          class="delete-banner-btn danger"
-          :disabled="deleting"
-          @click="onAgreeDelete"
-        >
-          {{ deleting ? 'Deleting…' : 'Agree & delete' }}
-        </button>
-        <button
-          type="button"
-          class="delete-banner-btn"
-          :disabled="deleting"
-          @click="onCancelOrReject"
-        >
-          Reject
-        </button>
-      </div>
-    </div>
+    <DeleteBanner
+      v-if="deleteRequestState !== 'none'"
+      :state="deleteRequestState"
+      :deleting="deleting"
+      @cancel="onCancelOrReject"
+      @agree="onAgreeDelete"
+      @reject="onCancelOrReject"
+    />
 
     <!-- Error banner -->
     <div v-if="error" class="error-banner">{{ error }}</div>
@@ -752,21 +695,10 @@ async function onAgreeDelete(): Promise<void> {
         <span class="send-icon" />
       </button>
 
-      <!-- Sticker picker — floats above the input bar. .stop on inner
-           clicks so the document-click-to-close handler doesn't fire when
-           the user picks something inside. -->
-      <div v-if="stickerPickerOpen" class="vw-popover sticker-picker" @click.stop>
-        <button
-          v-for="s in STICKERS"
-          :key="s.key"
-          type="button"
-          class="sticker-picker-item"
-          :title="s.label"
-          @click="onPickSticker(s.key)"
-        >
-          <img :src="s.url" :alt="s.label" />
-        </button>
-      </div>
+      <!-- Sticker picker — floats above the input bar. Open state stays
+           here so the existing useDocumentDismiss handler can coordinate
+           dismissal alongside the header menu and reaction picker. -->
+      <StickerPicker v-if="stickerPickerOpen" @pick="onPickSticker" />
     </form>
   </div>
 </template>
@@ -896,59 +828,6 @@ async function onAgreeDelete(): Promise<void> {
   text-overflow: ellipsis;
 }
 
-/* ── Mutual-delete banner ── */
-.delete-banner {
-  padding: 12px 16px;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-  border-bottom: 0.5px solid var(--vw-border);
-}
-.delete-banner.mine {
-  background: color-mix(in srgb, var(--vw-purple-light) 12%, transparent);
-  color: var(--vw-purple-pale);
-}
-.delete-banner.theirs {
-  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
-  color: var(--vw-danger);
-}
-.delete-banner span {
-  flex: 1;
-  min-width: 200px;
-}
-.delete-banner-actions {
-  display: flex;
-  gap: 8px;
-}
-.delete-banner-btn {
-  background: none;
-  border: 0.5px solid currentColor;
-  border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: inherit;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.delete-banner-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vw-text) 6%, transparent);
-}
-.delete-banner-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.delete-banner-btn.danger {
-  background: var(--vw-danger);
-  border-color: var(--vw-danger);
-  color: var(--vw-text);
-}
-.delete-banner-btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vw-danger) 85%, transparent);
-}
-
 /* ── Chat empty state ── */
 .chat-empty {
   margin: auto;
@@ -1056,53 +935,6 @@ async function onAgreeDelete(): Promise<void> {
 
 .file-input-hidden {
   display: none;
-}
-
-/* ── Sticker picker (floating panel above the input bar) ──
-   `position: absolute` anchored to .input-bar (which gets position:relative
-   below). Width matches the input area minus a little gutter so it visually
-   "belongs" to the input row. Three columns × three rows for the bundled
-   nine stickers. Surface chrome comes from .vw-popover; the inverted
-   shadow direction (negative y) is the one piece that has to be local —
-   the picker pops UP from the input bar so the shadow needs to fall
-   above it, opposite of the dropdown menus that fall below their trigger. */
-.sticker-picker {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 8px;
-  right: 8px;
-  border-radius: 12px;
-  padding: 10px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  z-index: 50;
-  box-shadow: 0 -4px 16px color-mix(in srgb, var(--vw-bg) 80%, transparent);
-}
-
-.sticker-picker-item {
-  background: none;
-  border: none;
-  padding: 4px;
-  border-radius: 8px;
-  aspect-ratio: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background 0.15s,
-    transform 0.15s;
-}
-.sticker-picker-item:hover {
-  background: var(--vw-surface);
-  transform: scale(1.05);
-}
-.sticker-picker-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
 }
 
 /* ── Lightbox ── */
