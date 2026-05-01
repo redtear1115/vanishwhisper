@@ -4,7 +4,18 @@ import { useIdentity } from '../identity'
 import { useLabels } from '../labels'
 import { useSessions, type ChatSessionRow } from '../sessions'
 import AppLogo from '../components/AppLogo.vue'
+import AppIcon from '../components/AppIcon.vue'
 import SessionRow from '../components/SessionRow.vue'
+import { stickerUrl } from '../stickers'
+
+// Reuse the painted sticker pack on empty states — they're already
+// loaded for the chat sticker picker, so this is "free" art that
+// reinforces the brand instead of "No sessions yet" being plain text.
+//   - 'hello' (waving Whisp) for the first-time / empty-list state
+//   - 'sleep' (sleeping Whisp) for the "all your active chats are
+//     archived" lull state
+const helloSticker = stickerUrl('hello')
+const sleepSticker = stickerUrl('sleep')
 
 const { identity } = useIdentity()
 const { sessions, error: sessionsError } = useSessions()
@@ -61,23 +72,33 @@ const archivedSessions = computed(() =>
           class="me-pill"
           :title="`You — ${identity.uid}\nClick to open profile`"
         >{{ identity.uid.slice(0, 10) }}…</router-link>
-        <router-link to="/profile" class="profile-link" title="Profile & vanish settings">⚙</router-link>
+        <router-link
+          to="/profile"
+          class="profile-link"
+          title="Profile & vanish settings"
+          aria-label="Profile and vanish settings"
+        >
+          <AppIcon name="settings" :size="16" />
+        </router-link>
         <span class="vw-badge-e2e">end-to-end encrypted</span>
       </div>
     </header>
 
     <div class="home-body">
       <router-link to="/create" class="vw-btn-primary new-btn">
-        <span class="new-icon">+</span>
+        <span class="new-icon"><AppIcon name="plus" :size="14" /></span>
         New encrypted session
       </router-link>
 
       <p v-if="sessionsError" class="vw-text-danger" style="font-size:13px;">
         {{ String(sessionsError) }}
       </p>
-      <p v-else-if="sessions.length === 0" class="empty-hint">
-        No sessions yet — share your UID to start.
-      </p>
+      <div v-else-if="sessions.length === 0" class="empty-hero">
+        <img v-if="helloSticker" :src="helloSticker" alt="" class="empty-hero-sticker" />
+        <p class="empty-hint">
+          No sessions yet — share your UID to start.
+        </p>
+      </div>
 
       <template v-else>
         <!-- Pinned section — only when at least one session is pinned. -->
@@ -95,11 +116,19 @@ const archivedSessions = computed(() =>
 
         <!-- Default section -->
         <div class="section-label">Your sessions</div>
-        <p v-if="defaultSessions.length === 0" class="empty-hint">
-          {{ archivedSessions.length > 0
-            ? 'Nothing here — your other sessions are archived below.'
-            : 'No active sessions.' }}
-        </p>
+        <div v-if="defaultSessions.length === 0" class="empty-inline">
+          <img
+            v-if="archivedSessions.length > 0 && sleepSticker"
+            :src="sleepSticker"
+            alt=""
+            class="empty-inline-sticker"
+          />
+          <p class="empty-hint">
+            {{ archivedSessions.length > 0
+              ? 'Nothing here — your other sessions are archived below.'
+              : 'No active sessions.' }}
+          </p>
+        </div>
         <div v-else class="session-list">
           <SessionRow
             v-for="s in defaultSessions"
@@ -116,8 +145,16 @@ const archivedSessions = computed(() =>
           <button
             type="button"
             class="archive-toggle"
+            :aria-expanded="archivedExpanded"
             @click="archivedExpanded = !archivedExpanded"
-          >{{ archivedExpanded ? '▾' : '▸' }} Archived ({{ archivedSessions.length }})</button>
+          >
+            <AppIcon
+              name="chevron"
+              :size="11"
+              :class="{ 'rotate-90': archivedExpanded }"
+            />
+            Archived ({{ archivedSessions.length }})
+          </button>
           <div v-if="archivedExpanded" class="session-list">
             <SessionRow
               v-for="s in archivedSessions"
@@ -151,7 +188,7 @@ const archivedSessions = computed(() =>
    the gear icon as a unobtrusive identity anchor. */
 .me-pill {
   font-size: 11px;
-  font-family: ui-monospace, monospace;
+  font-family: var(--vw-font-mono);
   padding: 3px 10px;
   border-radius: 99px;
   background: var(--vw-surface2);
@@ -223,6 +260,51 @@ const archivedSessions = computed(() =>
   padding: 28px 0;
 }
 
+/* Hero empty state — first-time / completely-empty list. The painted
+   waving Whisp sets a friendly tone for what otherwise reads as a dead
+   page. Sticker is sized large enough to register as the hero, dimmed
+   slightly so it doesn't outshine the New Session button above. */
+.empty-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 0 32px;
+}
+.empty-hero-sticker {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
+  /* 80% feels "settled" — full opacity is too presentational, lower
+     and the painted lines start to dissolve against the dark bg. */
+  opacity: 0.8;
+}
+.empty-hero .empty-hint {
+  padding: 0;
+}
+
+/* Inline empty state — "your other sessions are archived below". Smaller
+   sticker beside the text, in a row, so the layout doesn't push the
+   archive toggle far below. Sleeping Whisp signals the quiet/lull
+   state without needing copy to spell it out. */
+.empty-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 4px;
+}
+.empty-inline-sticker {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.empty-inline .empty-hint {
+  padding: 0;
+  text-align: left;
+}
+
 .session-list {
   display: flex;
   flex-direction: column;
@@ -241,7 +323,12 @@ const archivedSessions = computed(() =>
   letter-spacing: 0.08em;
   color: var(--vw-text3);
   cursor: pointer;
-  text-align: left;
+  /* Inline-flex aligns the rotating chevron icon with the label baseline.
+     gap matches the visual rhythm of the label tracking (0.08em on 11px ≈
+     6px effective spacing between letters → 6px gap reads consistently). */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transition: color 0.15s;
 }
 .archive-toggle:hover { color: var(--vw-text2); }

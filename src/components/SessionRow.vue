@@ -25,6 +25,7 @@ import {
 } from '../labels'
 import type { ChatSessionRow } from '../sessions'
 import { useDocumentDismiss } from '../useDocumentDismiss'
+import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{
   session: ChatSessionRow
@@ -154,9 +155,12 @@ useDocumentDismiss({
         type="button"
         class="row-menu-btn"
         :title="menuOpen ? 'Close menu' : 'Session actions'"
+        :aria-label="menuOpen ? 'Close menu' : 'Session actions'"
         :aria-expanded="menuOpen"
         @click="onMenuClick"
-      >⋯</button>
+      >
+        <AppIcon name="more" :size="16" />
+      </button>
       <div v-if="menuOpen" class="row-menu">
         <button type="button" class="row-menu-item" @click="toggleState('pinned')">
           {{ sessionState === 'pinned' ? 'Unpin' : 'Pin to top' }}
@@ -187,6 +191,9 @@ useDocumentDismiss({
 .session-item:focus-visible {
   outline: none;
   border-color: var(--vw-purple-mid);
+  /* Match the input focus halo — same ring across every focusable
+     surface so keyboard navigation reads as a coherent visual system. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vw-purple-mid) 20%, transparent);
 }
 
 /* Archived rows visually softer so they read as "out of focus". */

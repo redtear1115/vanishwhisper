@@ -30,6 +30,7 @@ import {
   type TargetIdentity,
 } from '../migration'
 import AppLogo from '../components/AppLogo.vue'
+import AppIcon from '../components/AppIcon.vue'
 
 const { identity } = useIdentity()
 
@@ -110,6 +111,17 @@ const progressPct = computed(() => {
 // hand off — re-runs after a previous sessions-only migration are the
 // label-only case.
 const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value > 0)
+
+// Mirror the formatter ProfileView uses so the fingerprint shown on this
+// page reads identically to the one on the new device's Profile page —
+// matching format = easier byte-for-byte verification by eye, which is
+// the entire point of this comparison step.
+function formatFingerprint(fp: string | null): string {
+  if (!fp) return '…'
+  const parts = fp.split(':')
+  if (parts.length !== 8) return fp
+  return parts.slice(0, 4).join(':') + '  ' + parts.slice(4).join(':')
+}
 </script>
 
 <template>
@@ -119,7 +131,10 @@ const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value
     </header>
 
     <div class="migrate-body">
-      <router-link to="/profile" class="back-link">← Profile</router-link>
+      <router-link to="/profile" class="back-link">
+        <AppIcon name="back" :size="14" />
+        Profile
+      </router-link>
 
       <h1 class="title">Move account to another device</h1>
 
@@ -173,7 +188,7 @@ const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value
         <div class="section-label">Step 3 — Verify the fingerprint matches</div>
         <div class="vw-card">
           <div class="field-label">New device's key fingerprint</div>
-          <code class="fp">{{ target.fingerprint }}</code>
+          <code class="crypto-block fingerprint">{{ formatFingerprint(target.fingerprint) }}</code>
           <p class="hint">
             On your new device, open <strong>Profile</strong> and check the
             <code>Key fingerprint</code>. The two must be byte-for-byte identical. If they differ,
@@ -265,6 +280,9 @@ const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value
   font-size: 12px;
   color: var(--vw-purple-light);
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .back-link:hover { color: var(--vw-purple-pale); }
 
@@ -301,22 +319,10 @@ const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value
 
 .uid-input {
   width: 100%;
-  font-family: ui-monospace, monospace;
+  font-family: var(--vw-font-mono);
   font-size: 12px;
 }
 
-.fp {
-  font-family: ui-monospace, monospace;
-  font-size: 14px;
-  color: var(--vw-purple-pale);
-  letter-spacing: 0.04em;
-  display: block;
-  padding: 8px 10px;
-  background: var(--vw-bg);
-  border-radius: 6px;
-  border: 0.5px solid var(--vw-border);
-  word-break: break-all;
-}
 
 .verify-row {
   display: flex;
@@ -360,7 +366,7 @@ const hasWorkToDo = computed(() => sessions.value.length > 0 || labelCount.value
   text-align: center;
 }
 .bottom-fp code {
-  font-family: ui-monospace, monospace;
+  font-family: var(--vw-font-mono);
   color: var(--vw-purple-light);
 }
 </style>

@@ -15,6 +15,7 @@
 // querySelector('[data-mid="…"]') without knowing about this component.
 import { stickerUrl } from '../stickers'
 import type { ChatMessageRow } from '../messages'
+import AppIcon from './AppIcon.vue'
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 
@@ -105,8 +106,11 @@ function reactionCount(emoji: string): number {
         class="bubble-reply"
         type="button"
         title="Reply"
+        aria-label="Reply"
         @click.stop="emit('reply')"
-      >↩</button>
+      >
+        <AppIcon name="reply" :size="11" />
+      </button>
       <template v-if="message.sticker">
         <img
           v-if="stickerUrl(message.sticker)"
@@ -133,8 +137,11 @@ function reactionCount(emoji: string): number {
         class="bubble-delete"
         type="button"
         title="Unsend"
+        aria-label="Unsend"
         @click.stop="emit('delete')"
-      >×</button>
+      >
+        <AppIcon name="close" :size="11" />
+      </button>
       <!-- Reaction picker trigger — only on inbound messages, hover-revealed
            like the unsend button. Stops propagation so the document
            click-outside handler doesn't immediately re-close the picker. -->
@@ -143,8 +150,11 @@ function reactionCount(emoji: string): number {
         class="bubble-react"
         type="button"
         title="React"
+        aria-label="React"
         @click.stop="emit('pickerOpen')"
-      >+</button>
+      >
+        <AppIcon name="plus" :size="11" />
+      </button>
     </div>
 
     <!-- Shared progress line + meta row — only on the LAST message of a
@@ -203,18 +213,48 @@ function reactionCount(emoji: string): number {
    drives the animation on the compositor without per-second JS updates.
    The line spans the whole message-row column (75% viewport max) rather
    than fitting the bubble; it reads as a divider between bubble and meta
-   as well as a countdown indicator. */
+   as well as a countdown indicator.
+
+   Two visual moves on the fill itself make the "vanishing" semantic
+   visceral instead of just informational:
+     1. A mask-image fades the trailing (right) edge to transparent over
+        the rightmost 18% of the fill — the bar literally mists away
+        rather than being a hard rectangular cap. As the fill depletes
+        from width 100% → 0, that mist follows the leading edge of
+        whatever's left, so the message "evaporates" instead of "shrinks".
+     2. A soft mint box-shadow gives the bar a phosphor-like glow that
+        matches the live-pill mint accent. Subtle enough that it reads
+        as "alive / running" rather than "neon" — important on dark mode
+        where bright glows can feel hostile.
+   The parent .msg-progress no longer needs overflow:hidden because the
+   mask now constrains the visible fill geometry; removing it lets the
+   box-shadow render past the 2px track height without clipping. */
 .msg-progress {
   width: 100%;
   height: 2px;
   background: var(--vw-border);
   border-radius: 1px;
-  overflow: hidden;
 }
 .msg-progress-fill {
   height: 100%;
   width: 100%;
   background: var(--vw-green-strong);
+  border-radius: 1px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 82%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 82%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 4px color-mix(in srgb, var(--vw-green-strong) 55%, transparent),
+    0 0 10px color-mix(in srgb, var(--vw-green-strong) 25%, transparent);
   animation-name: msg-deplete;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
@@ -242,6 +282,20 @@ function reactionCount(emoji: string): number {
    hover lose discoverability — acceptable trade for desktop cleanness in
    the current phase. */
 .msg-bubble { position: relative; }
+
+/* Shared geometry for all three bubble action buttons (delete / react /
+   reply). Each is a 20px circular hover-revealed affordance positioned
+   over a corner of the bubble — only the corner placement and color
+   semantics differ. The flex centering is what positions the inner
+   SVG icon correctly inside the circle. */
+.bubble-delete,
+.bubble-react,
+.bubble-reply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .bubble-delete {
   position: absolute;
   top: -8px;

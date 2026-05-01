@@ -3,8 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ChatMessageBubble from '../components/ChatMessageBubble.vue'
 import ChatRenamePanel from '../components/ChatRenamePanel.vue'
+import AppIcon from '../components/AppIcon.vue'
 import { getIdentity } from '../identity'
-import { markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
+import { avatarInitials, avatarScheme, markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
 import { claimOrphanMessages } from '../migration'
 import {
   deleteMessage,
@@ -139,6 +140,21 @@ const headerDisplay = computed(() => {
   return sessionDisplay(labels.value, props.id, opened.value.otherParticipant, {
     otherShortLen: 16,
   })
+})
+
+// Reuse SessionRow's avatar helpers so the same coloured initials a
+// session has on the home list also greet the user inside the chat —
+// makes the visual identity of "this person" continuous across surfaces.
+// Returns null while the session is still loading (no otherParticipant
+// uid yet) — template hides the avatar in that case.
+const headerAvatar = computed(() => {
+  if (!opened.value) return null
+  const otherUid = opened.value.otherParticipant
+  const otherName = labels.value.get(props.id)?.otherName ?? otherUid
+  return {
+    initials: avatarInitials(otherName),
+    scheme: avatarScheme(otherUid),
+  }
 })
 
 let unsub: (() => void) | null = null
@@ -558,7 +574,15 @@ async function onAgreeDelete(): Promise<void> {
          (rename, request delete) live behind the explicit ⋯ menu — which
          is more discoverable than a hidden click target on the title. -->
     <header class="chat-header">
-      <router-link to="/" class="back-btn">←</router-link>
+      <router-link to="/" class="back-btn" aria-label="Back to sessions">
+        <AppIcon name="back" :size="18" />
+      </router-link>
+      <div
+        v-if="headerAvatar"
+        class="chat-header-avatar"
+        :class="`scheme-${headerAvatar.scheme}`"
+        aria-hidden="true"
+      >{{ headerAvatar.initials }}</div>
       <div class="chat-header-info">
         <span class="chat-title">{{ headerDisplay.primary }}</span>
         <span v-if="headerDisplay.secondary" class="chat-subtitle">{{ headerDisplay.secondary }}</span>
@@ -567,8 +591,11 @@ async function onAgreeDelete(): Promise<void> {
         type="button"
         class="header-menu-btn"
         :title="menuOpen ? 'Close menu' : 'Session menu'"
+        :aria-label="menuOpen ? 'Close menu' : 'Session menu'"
         @click.stop="menuOpen = !menuOpen"
-      >⋯</button>
+      >
+        <AppIcon name="more" :size="18" />
+      </button>
       <span class="vw-badge-e2e">E2E</span>
 
       <div v-if="menuOpen" class="header-menu" @click.stop>
@@ -672,7 +699,9 @@ async function onAgreeDelete(): Promise<void> {
           class="lightbox-close"
           aria-label="Close"
           @click.stop="closeLightbox"
-        >×</button>
+        >
+          <AppIcon name="close" :size="20" />
+        </button>
       </div>
     </Teleport>
 
@@ -689,7 +718,9 @@ async function onAgreeDelete(): Promise<void> {
         class="reply-preview-close"
         aria-label="Cancel reply"
         @click="cancelReply"
-      >×</button>
+      >
+        <AppIcon name="close" :size="14" />
+      </button>
     </div>
 
     <!-- Input bar. Drops out while sessionHidden so a glance at the screen
@@ -700,8 +731,11 @@ async function onAgreeDelete(): Promise<void> {
         class="attach-btn"
         :disabled="sending || sendingImage"
         :title="sendingImage ? 'Sending image…' : 'Attach image (max 5 MB)'"
+        :aria-label="sendingImage ? 'Sending image' : 'Attach image'"
         @click="openFilePicker"
-      >📎</button>
+      >
+        <AppIcon name="attach" :size="18" />
+      </button>
       <input
         ref="fileInputRef"
         type="file"
@@ -714,8 +748,11 @@ async function onAgreeDelete(): Promise<void> {
         class="attach-btn"
         :disabled="sending || sendingImage"
         title="Send a sticker"
+        aria-label="Send a sticker"
         @click.stop="stickerPickerOpen = !stickerPickerOpen"
-      >😺</button>
+      >
+        <AppIcon name="sticker" :size="18" />
+      </button>
       <input
         ref="draftInputRef"
         v-model="draft"
@@ -778,12 +815,51 @@ async function onAgreeDelete(): Promise<void> {
 }
 
 .back-btn {
-  font-size: 16px;
+  /* Wraps an Icon (SVG) now rather than a text glyph — flex centers it
+     in a 28px tap target so the touch surface is the same as the menu
+     button on the right side of the header. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   color: var(--vw-purple-light);
   text-decoration: none;
   flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
 }
-.back-btn:hover { color: var(--vw-purple-pale); }
+.back-btn:hover {
+  color: var(--vw-purple-pale);
+  background: var(--vw-surface2);
+}
+
+/* Per-conversation avatar in the chat header. Same coloured-initials
+   convention SessionRow uses on the home list — when you tap into a
+   chat, the visual identity of "this person" persists from the row
+   into the chat. Sized smaller (28px vs 36px on the row) so it doesn't
+   crowd the back button + title. The two scheme classes mirror
+   SessionRow's exactly so the colour assignment per uid is stable
+   across surfaces. */
+.chat-header-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.chat-header-avatar.scheme-purple {
+  background: var(--vw-purple-deep);
+  color: var(--vw-purple-pale);
+}
+.chat-header-avatar.scheme-green {
+  background: var(--vw-green-deep);
+  color: var(--vw-green);
+}
 
 /* The header info area is now non-interactive display — session-level
    actions moved behind the explicit ⋯ button next to it for clearer
@@ -797,9 +873,16 @@ async function onAgreeDelete(): Promise<void> {
 }
 
 .chat-title {
-  font-size: 13px;
+  /* Fraunces serif at 14px gives the chat header a "this is a private
+     channel" editorial feel — distinct from the body sans used in the
+     conversation. Lower opsz (smaller optical-size) keeps it readable
+     at this small a size. SOFT moderate, WONK off for a calmer header. */
+  font-family: var(--vw-font-display);
+  font-variation-settings: 'opsz' 14, 'SOFT' 40, 'WONK' 0;
+  font-size: 14px;
   font-weight: 500;
   color: var(--vw-text);
+  letter-spacing: -0.005em;
 }
 
 /* ── Header overflow menu ── */

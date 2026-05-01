@@ -4,11 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0D0A14" />
-    <!-- Favicon (high-res master, browsers downsample for the tab) +
-         apple-touch-icon at iOS's exact 180×180 spec. Two separate files
-         so each surface gets the right resolution. -->
+
+    <!-- Browser favicon: painted Whisp portrait, RGBA with transparent bg
+         (alpha verified via `file` — 1024×1024 8-bit/color RGBA). Same
+         file also serves as the topbar logo source from AppLogo.vue —
+         single source of truth for the brand mark.
+         No SVG variant: at 16-32px tab sizes the painted PNG downsamples
+         cleanly enough, and a geometric SVG approximation can't capture
+         the painted character (mint eyes, pink nose, whiskers) that
+         differentiates Whisp from "generic ghost". -->
     <link rel="icon" type="image/png" href="/whisp-icon.png" />
+
+    <!-- iOS home-screen tile. Composited from whisp-icon.png centered at
+         144×144 onto a solid #0D0A14 (--vw-bg) 180×180 canvas — generated
+         via ImageMagick, see commit history for the magick command.
+         Solid background is required: iOS auto-applies a rounded-corner
+         mask, and transparent-bg sources would show artifacts around
+         the corner radius. The painted Whisp is sized at 80% of the
+         canvas so the rounded mask never bites into the figure. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Open Graph + Twitter Card meta — drives the link preview surface
+         when vanishwhisper.web.app gets shared in chats / feeds.
+         og:image is whisp-og.png (1729×910 painted composition with
+         wordmark + tagline + Whisp). Absolute URL required because
+         scrapers don't always resolve relative paths against the page's
+         own origin.
+         twitter:card = summary_large_image picks the wide preview tile
+         (1.91:1 aspect, matching the og:image) over the small square. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="VanishWhisper" />
+    <meta property="og:description" content="End-to-end encrypted whispers that vanish after reading. No accounts, no logs." />
+    <meta property="og:url" content="https://vanishwhisper.web.app/" />
+    <meta property="og:image" content="https://vanishwhisper.web.app/whisp-og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="VanishWhisper" />
+    <meta name="twitter:description" content="End-to-end encrypted whispers that vanish after reading. No accounts, no logs." />
+    <meta name="twitter:image" content="https://vanishwhisper.web.app/whisp-og.png" />
+
     <title>VanishWhisper</title>
   </head>
   <body>

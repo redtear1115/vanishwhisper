@@ -32,6 +32,61 @@
 
   /* ── Danger ── */
   --vw-danger: #E85C7A;
+
+  /* ── Typography ──
+     Three roles, each on a self-hosted variable font (loaded in main.ts):
+       - display: wordmark + chat titles. Fraunces with SOFT/WONK axes
+         lets us match the painted Whisp mascot — `font-variation-settings:
+         'SOFT' 60, 'WONK' 1` makes serifs softer and letterforms subtly
+         asymmetric.
+       - body: chat content, hints, button text, inputs. Figtree is a
+         less-common UI sans (cf. Inter / Geist) optimized for small
+         sizes — the chat is dense at 13px so this matters.
+       - mono: UID / fingerprint / decryption-failure markers. JetBrains
+         Mono has the clearest 0/O, l/I/1, and hex digit shapes for the
+         cryptographic-object surfaces.
+     Always reference via these tokens — never hardcode font-family in
+     components.
+
+     CJK fallback strategy (TW-first audience):
+     None of the three webfonts ship CJK glyphs (subset = latin + a few
+     Latin-adjacent ranges only) and self-hosting CJK is prohibitive
+     (Noto Serif TC is ~5MB even WOFF2). Instead, each chain explicitly
+     names the OS-bundled "right" Chinese face after its Latin font, so:
+       - display gets a CJK SERIF (Songti TC on Apple, MingLiU on Win,
+         Noto Serif TC elsewhere) — without this, "Chat with 小明" would
+         render as Fraunces serif + PingFang sans on macOS (Georgia has
+         no CJK so the browser falls all the way through to the system
+         default sans), giving a jarring serif/sans split across one
+         line. With this chain, the Chinese half stays serif.
+       - body gets CJK SANS (PingFang TC / Microsoft JhengHei / Noto
+         Sans TC) so the conversation reads natively on every platform.
+       - mono falls through to CJK SANS too — UID / fingerprint surfaces
+         rarely contain CJK, but if a label does, a system sans is
+         better than a tofu rectangle.
+     Quoted strings for multi-word names; bare for single tokens. */
+  --vw-font-display:
+    'Fraunces Variable', Georgia, 'Times New Roman',
+    'Songti TC', 'Songti SC', 'PMingLiU', 'Noto Serif TC', 'Source Han Serif TC',
+    serif;
+  --vw-font-body:
+    'Figtree Variable', system-ui, -apple-system,
+    'PingFang TC', 'Microsoft JhengHei', 'Noto Sans TC', 'Noto Sans CJK TC',
+    sans-serif;
+  --vw-font-mono:
+    'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', Menlo,
+    'PingFang TC', 'Microsoft JhengHei', 'Noto Sans Mono CJK TC',
+    monospace;
+
+  /* ── Atmosphere ──
+     A 160×160 SVG noise tile, served as a data URL so it costs zero extra
+     HTTP and lives entirely in the CSS bundle (~600 bytes). feTurbulence
+     produces fractal noise; feColorMatrix maps it to white at alpha 0.08,
+     giving very low-opacity additive grain over the dark background.
+     stitchTiles='stitch' makes the seam between repeated tiles invisible.
+     Reused on body + .app-shell so the column and the desktop gutters
+     share the same texture without a visible boundary between them. */
+  --vw-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* ── Reset & base ── */
@@ -39,10 +94,53 @@
   box-sizing: border-box;
 }
 
+/* User-agent stylesheets give body 8px margin by default. With the body's
+   atmospheric stack (radial + grain) painted underneath the .app-shell,
+   that margin became visible as a strip outside the column AND pushed the
+   total content height past 100dvh — producing a faint always-on
+   scrollbar. Resetting both html and body ensures the column starts at
+   the viewport edge with no excess scrollable area. */
+html, body {
+  margin: 0;
+  padding: 0;
+  /* Defensive horizontal-overflow guard. iOS Safari occasionally
+     develops a horizontally pannable viewport when ANY descendant ends
+     up wider than the screen (long unbreakable strings, fixed elements,
+     post-zoom recovery).
+     `overflow-x: clip` (NOT hidden) is the right tool here — clip
+     truncates the same way hidden does but does NOT establish a
+     scroll container. With hidden, Safari handled the implicit
+     overflow-y in a way that broke long-page vertical scroll on
+     views like Profile (the page would refuse to scroll past the
+     fold). clip avoids that by leaving overflow-y semantics
+     completely intact at the document level.
+     Browser support: Safari 16+, Chrome 90+, Firefox 81+. */
+  overflow-x: clip;
+}
+
 body {
-  background: var(--vw-bg);
+  /* Layered atmosphere, top to bottom:
+       (1) film grain — tiled SVG noise at ~8% opacity, gives the dark base
+           a "this isn't an LCD test pattern" texture that matches the
+           painted Whisp mascot's hand-drawn quality.
+       (2) soft purple haze — radial gradient from just above the viewport
+           top, fading down. Mimics moonlight angle and adds subtle vertical
+           depth so the page reads as a "scene" not a flat panel.
+       (3) solid base — same --vw-bg as before, anchors the stack so the
+           gradients/grain composite over a known color. Also separately
+           set as background-color so any future shorthand override
+           preserves at least the solid layer. */
+  background:
+    var(--vw-grain) repeat,
+    radial-gradient(
+      ellipse 80% 60% at 50% -10%,
+      color-mix(in srgb, var(--vw-purple-mid) 18%, transparent) 0%,
+      transparent 70%
+    ),
+    var(--vw-bg);
+  background-color: var(--vw-bg);
   color: var(--vw-text);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--vw-font-body);
   /* 100vh on mobile counts the URL bar / keyboard chrome, so body becomes
      taller than the visible viewport — that's the "I can keep scrolling
      past the input bar into blank space" bug on phones. 100dvh tracks the
@@ -53,21 +151,53 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Mascot watermark in the desktop gutter. Fixed-positioned at the right
+   viewport edge so it always lands in the right gutter; .app-shell's
+   solid bg covers the column area, hiding the mascot anywhere INSIDE
+   the chat panel. ≥768px breakpoint slightly above the 720px column cap
+   so we only enable it once there's actual gutter space (a viewport that
+   exactly equals 720px would have the mascot clipped against the column
+   edge). Static — no drift animation; the whisper aesthetic is calmer
+   without movement, and the painted mascot is enough character on its own. */
+@media (min-width: 768px) {
+  body::after {
+    content: '';
+    position: fixed;
+    bottom: 6vh;
+    right: 4vw;
+    width: 160px;
+    height: 160px;
+    background: url('../assets/whisp-mascot.png') no-repeat center / contain;
+    /* Very low opacity — readable as "a presence" rather than "an image".
+       Higher values start fighting the chat panel for visual weight. */
+    opacity: 0.05;
+    pointer-events: none;
+    /* Behind everything else fixed-positioned (e.g. the chat lightbox,
+       which sets z-index 1000). */
+    z-index: 0;
+  }
+}
+
 html, body {
   overscroll-behavior-y: none;
 }
 
 /* iOS Safari auto-zooms the page whenever a focused <input> / <textarea>
    has a computed font-size below 16px — that's what makes the chat input
-   pull-zoom on tap and crop the conversation horizontally. Bumping to 16px
-   only on touch devices keeps the desktop look (which uses 13px for a
-   denser layout) untouched. Apply to all our input flavours so the rename
-   panel and any future inputs are covered too. */
+   pull-zoom on tap and (post-zoom) lets the user pan the page horizontally.
+   Bumping to 16px only on touch devices keeps the desktop look (which
+   uses 12-13px for a denser layout) untouched.
+   The selector is intentionally broad (`input, textarea` rather than our
+   utility classes) and uses !important so it wins against any scoped
+   per-view font-size override (Vue scoped CSS adds an attribute selector
+   that raises specificity above plain class selectors — without
+   !important, e.g. MigrateView's .uid-input @ 12px would still trigger
+   the zoom). This is intentional firewall behaviour: NO input should
+   ever be < 16px on iOS, regardless of what a future component decides. */
 @media (hover: none) {
-  .vw-input,
-  .vw-input-pill,
+  input,
   textarea {
-    font-size: 16px;
+    font-size: 16px !important;
   }
 }
 
@@ -78,7 +208,7 @@ a {
 a:hover { color: var(--vw-purple-pale); }
 
 code {
-  font-family: ui-monospace, monospace;
+  font-family: var(--vw-font-mono);
   font-size: 0.85em;
   color: var(--vw-purple-light);
 }
@@ -162,7 +292,14 @@ code {
   transition: border-color 0.15s;
 }
 .vw-input::placeholder { color: var(--vw-text3); }
-.vw-input:focus { border-color: var(--vw-purple-mid); }
+.vw-input:focus {
+  border-color: var(--vw-purple-mid);
+  /* Soft purple halo on focus — phosphor-on-dark feel that matches the
+     overall night/whisper aesthetic. 3px ring at 20% mix is bright enough
+     to be obvious for keyboard users, dim enough to not be hostile to
+     touch users (who get it as a brief flash on tap). */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vw-purple-mid) 20%, transparent);
+}
 
 .vw-input-pill {
   background: var(--vw-bg);
@@ -175,7 +312,11 @@ code {
   outline: none;
 }
 .vw-input-pill::placeholder { color: var(--vw-text3); }
-.vw-input-pill:focus { border-color: var(--vw-purple-mid); }
+.vw-input-pill:focus {
+  border-color: var(--vw-purple-mid);
+  /* Same focus halo as .vw-input — see comment there. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vw-purple-mid) 20%, transparent);
+}
 
 .vw-topbar {
   display: flex;
@@ -190,6 +331,53 @@ code {
 .vw-text-hint    { color: var(--vw-text3); }
 .vw-text-danger  { color: var(--vw-danger); }
 .vw-text-green   { color: var(--vw-green-strong); }
+
+/* ── Cryptographic-object surfaces ──
+   For UIDs, fingerprints, and other "this is a permanent value you
+   compare or copy" surfaces. Inset slot at the deepest bg layer so the
+   value reads as a "field" you reach into rather than prose. Mono font
+   makes per-character identity unambiguous (0/O, 1/l/I).
+
+   Used across ProfileView (own UID + fingerprint), CreateView (own UID),
+   JoinView (inviter UID), MigrateView (target fingerprint) — the global
+   utility ensures the SAME identity renders identically everywhere it
+   appears, so users don't see "wait, are these the same value?" moments
+   when crossing between surfaces.
+
+   Letter-spacing is intentionally NOT byte-grouped on the base class —
+   Firebase UIDs are random base62 (no byte structure), so artificial
+   chunking would make them read as license codes / invite codes rather
+   than identity. The .fingerprint variant DOES open up tracking and
+   relies on the `aa:bb:cc:dd  ee:ff:gg:hh` mid-space format (inserted
+   by the formatFingerprint() helper) because hex-byte fingerprints
+   genuinely have byte structure and are used for visual comparison. */
+.crypto-block {
+  display: block;
+  font-family: var(--vw-font-mono);
+  font-size: 12px;
+  /* Subtle tracking — adds breathing room without "spreading" the chars */
+  letter-spacing: 0.05em;
+  line-height: 1.6;
+  color: var(--vw-purple-light);
+  padding: 10px 12px;
+  background: var(--vw-bg);
+  border: 0.5px solid var(--vw-border);
+  border-radius: 6px;
+  /* break-spaces preserves the doubled space the fingerprint formatter
+     inserts at the byte midpoint; word-break: break-all wraps long
+     UIDs without overflow on narrow viewports. */
+  white-space: break-spaces;
+  word-break: break-all;
+}
+
+/* Fingerprint variant — verification surfaces. Slightly larger and
+   brighter so the "this is what you actually compare" weight reads
+   correct. Wider tracking for byte-by-byte scan. */
+.crypto-block.fingerprint {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--vw-purple-pale);
+}
 
 /* ── Chat bubbles ── */
 .vw-bubble-me {

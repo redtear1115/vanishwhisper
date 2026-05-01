@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useIdentity } from '../identity'
 import { createSession } from '../sessions'
 import AppLogo from '../components/AppLogo.vue'
+import AppIcon from '../components/AppIcon.vue'
 
 const { identity } = useIdentity()
 
@@ -39,35 +40,41 @@ async function copyUid(): Promise<void> {
   }
 }
 
-async function shareInviteLink(): Promise<void> {
+// Direct clipboard copy — predictable one-tap → "✓ Copied link" feedback.
+// This is the default action because macOS share sheet doesn't include a
+// "Copy" option (iOS does), so the prior "share-with-clipboard-fallback"
+// flow left desktop users stuck inside a share sheet they couldn't get
+// anything useful out of.
+async function copyInviteLink(): Promise<void> {
   if (!identity.value) return
   error.value = null
   const url = inviteUrl(identity.value.uid)
-  // Prefer the native share sheet on mobile (one tap to AirDrop / Signal /
-  // Messages / etc.). Fall back to clipboard copy on desktop or if the
-  // share sheet errors out for any reason except a user cancel.
-  if (supportsShare) {
-    try {
-      // ONLY pass `url` (and a short `title` for the share-sheet header) —
-      // some receivers (macOS Notes, Messages, certain share targets) paste
-      // `text` AND `url` concatenated as two lines, breaking the click-to-
-      // join experience. Title is typically used as the email subject /
-      // share sheet header and is dropped on plain Copy, so it's safe.
-      await navigator.share({
-        title: 'VanishWhisper invite',
-        url,
-      })
-      return
-    } catch (err) {
-      // User dismissed the share sheet — silent. Anything else, fall
-      // through to the clipboard fallback below.
-      if (err instanceof Error && err.name === 'AbortError') return
-    }
-  }
   try {
     await navigator.clipboard.writeText(url)
     flashCopied('link')
   } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// Opt-in share via native sheet — for users who'd rather route the link
+// straight into AirDrop / Signal / Messages without a clipboard hop.
+// Only rendered when navigator.share exists, so the button vanishes on
+// browsers where it'd fall back to clipboard anyway (which would
+// duplicate Copy uselessly).
+//
+// `title` only (no `text`) so receivers paste a clean URL — some share
+// targets (macOS Notes, Messages, Mail) concatenate text + url as two
+// lines and break the click-to-join flow.
+async function shareInviteLink(): Promise<void> {
+  if (!identity.value) return
+  error.value = null
+  const url = inviteUrl(identity.value.uid)
+  try {
+    await navigator.share({ title: 'VanishWhisper invite', url })
+  } catch (err) {
+    // User dismissed the share sheet — silent. Anything else surfaces.
+    if (err instanceof Error && err.name === 'AbortError') return
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
@@ -94,14 +101,23 @@ async function submit() {
     </header>
 
     <div class="create-body">
-      <router-link to="/" class="back-link">← Sessions</router-link>
+      <router-link to="/" class="back-link">
+        <AppIcon name="back" :size="14" />
+        Sessions
+      </router-link>
 
       <div class="section-label">New session</div>
 
       <div class="vw-card uid-display">
         <div class="field-label">Your UID (share out-of-band)</div>
-        <code class="uid-val">{{ identity?.uid }}</code>
+        <code class="crypto-block">{{ identity?.uid ?? '…' }}</code>
         <div class="share-actions">
+          <button
+            type="button"
+            class="share-btn primary"
+            :disabled="!identity"
+            @click="copyInviteLink"
+          >{{ linkCopied ? '✓ Copied link' : 'Copy invite link' }}</button>
           <button
             type="button"
             class="share-btn"
@@ -109,17 +125,12 @@ async function submit() {
             @click="copyUid"
           >{{ uidCopied ? '✓ Copied' : 'Copy UID' }}</button>
           <button
+            v-if="supportsShare"
             type="button"
-            class="share-btn primary"
+            class="share-btn"
             :disabled="!identity"
             @click="shareInviteLink"
-          >{{
-            linkCopied
-              ? '✓ Copied link'
-              : supportsShare
-                ? 'Share invite link'
-                : 'Copy invite link'
-          }}</button>
+          >Share…</button>
         </div>
         <p class="share-hint">
           The link drops the recipient on a confirm-and-start page — one tap and
@@ -245,13 +256,6 @@ async function submit() {
   color: var(--vw-text3);
 }
 
-.uid-val {
-  font-size: 12px;
-  color: var(--vw-purple-light);
-  word-break: break-all;
-  line-height: 1.5;
-}
-
 .divider {
   border: none;
   border-top: 0.5px solid var(--vw-border);
@@ -294,6 +298,6 @@ async function submit() {
 }
 .success-box code {
   color: var(--vw-green);
-  font-family: ui-monospace, monospace;
+  font-family: var(--vw-font-mono);
 }
 </style>

@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { useIdentity } from '../identity'
 import { getDeletedInMinutes, setDeletedInMinutes } from '../users'
 import AppLogo from '../components/AppLogo.vue'
+import AppIcon from '../components/AppIcon.vue'
 
 const { identity } = useIdentity()
 
@@ -61,22 +62,13 @@ async function copyUid(): Promise<void> {
   }
 }
 
-// Mirrors the share-invite flow on /create — Profile is the natural home
-// for "give my UID to someone so they can invite me", so duplicate the
-// affordance here. Same native-share-with-clipboard-fallback contract;
-// only `url` (no `text`) so receivers paste a clean link.
-async function shareInviteLink(): Promise<void> {
+// Direct clipboard copy — what users actually want 95% of the time.
+// Predictable: one tap → link is in your clipboard, status flips to
+// "✓ Copied link" for 1.5s. No share-sheet detour.
+async function copyInviteLink(): Promise<void> {
   if (!identity.value) return
   error.value = null
   const url = `${window.location.origin}/join/${identity.value.uid}`
-  if (supportsShare) {
-    try {
-      await navigator.share({ title: 'VanishWhisper invite', url })
-      return
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return
-    }
-  }
   try {
     await navigator.clipboard.writeText(url)
     linkCopied.value = true
@@ -84,6 +76,27 @@ async function shareInviteLink(): Promise<void> {
       linkCopied.value = false
     }, 1500)
   } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+// Opt-in share via the native share sheet — for users who'd rather
+// shoot the link straight into AirDrop / Messages / etc. without a
+// clipboard hop. Only rendered when navigator.share exists, so this
+// button doesn't appear at all on browsers (e.g. desktop Firefox)
+// where it'd fall back to clipboard anyway and duplicate Copy.
+//
+// `title` only (no `text`) so receivers paste a clean URL — some
+// share targets (Messages, Notes, Mail) concatenate text + url as
+// two lines and break the click-to-join experience.
+async function shareInviteLink(): Promise<void> {
+  if (!identity.value) return
+  error.value = null
+  const url = `${window.location.origin}/join/${identity.value.uid}`
+  try {
+    await navigator.share({ title: 'VanishWhisper invite', url })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
@@ -115,6 +128,24 @@ function fmtMinutes(m: number): string {
 function isDirty(): boolean {
   return draftMinutes.value !== currentMinutes.value
 }
+
+// UID is shown raw (no chunking) — Firebase UIDs are random base62 with
+// no byte structure, so artificial 4-char chunking would make them read
+// as invite codes / license keys rather than permanent identity. The
+// .crypto-block utility's letter-spacing alone provides scan breathing.
+//
+// formatFingerprint splits the hex-byte fingerprint into two 4-byte
+// halves separated by a doubled space. Hex bytes DO have byte structure,
+// and the primary use case is visual side-by-side comparison between
+// two devices (during migration / out-of-band verification), so the
+// mid-gap helps the eye parse 4-byte groups instantly without losing
+// place. Inspired by PGP / SSL fingerprint conventions.
+function formatFingerprint(fp: string | null): string {
+  if (!fp) return '…'
+  const parts = fp.split(':')
+  if (parts.length !== 8) return fp
+  return parts.slice(0, 4).join(':') + '  ' + parts.slice(4).join(':')
+}
 </script>
 
 <template>
@@ -124,35 +155,39 @@ function isDirty(): boolean {
     </header>
 
     <div class="profile-body">
-      <router-link to="/" class="back-link">← Sessions</router-link>
+      <router-link to="/" class="back-link">
+        <AppIcon name="back" :size="14" />
+        Sessions
+      </router-link>
 
       <div class="section-label">Identity</div>
 
       <div class="vw-card uid-card">
         <div class="field-label">Your UID</div>
-        <code class="uid-val">{{ identity?.uid ?? '…' }}</code>
+        <code class="crypto-block">{{ identity?.uid ?? '…' }}</code>
         <div class="uid-actions">
-          <button type="button" class="copy-btn" :disabled="!identity" @click="copyUid">
-            {{ copied ? '✓ Copied' : 'Copy UID' }}
-          </button>
           <button
             type="button"
             class="copy-btn primary"
             :disabled="!identity"
+            @click="copyInviteLink"
+          >{{ linkCopied ? '✓ Copied link' : 'Copy invite link' }}</button>
+          <button type="button" class="copy-btn" :disabled="!identity" @click="copyUid">
+            {{ copied ? '✓ Copied' : 'Copy UID' }}
+          </button>
+          <button
+            v-if="supportsShare"
+            type="button"
+            class="copy-btn"
+            :disabled="!identity"
             @click="shareInviteLink"
-          >{{
-            linkCopied
-              ? '✓ Copied link'
-              : supportsShare
-                ? 'Share invite link'
-                : 'Copy invite link'
-          }}</button>
+          >Share…</button>
         </div>
       </div>
 
       <div class="vw-card">
         <div class="field-label">Key fingerprint</div>
-        <code class="uid-val">{{ fingerprint ?? '…' }}</code>
+        <code class="crypto-block fingerprint">{{ formatFingerprint(fingerprint) }}</code>
         <p class="hint">First 8 bytes of SHA-256 of your public key. Compare with the other party out-of-band to confirm you're talking to who you think.</p>
       </div>
 
@@ -205,10 +240,16 @@ function isDirty(): boolean {
       <div class="vw-card">
         <p class="hint">
           Switching to a new device? Move your sessions and message history over before you stop
-          using this one — accounts can't be recovered after the fact.
+          using this one.
+        </p>
+        <p class="hint danger-hint">
+          Accounts can't be recovered after the fact.
         </p>
         <div class="uid-actions">
-          <router-link to="/migrate" class="copy-btn">Move account to another device</router-link>
+          <router-link to="/migrate" class="copy-btn danger">
+            <AppIcon name="warning" :size="14" />
+            Move account to another device
+          </router-link>
         </div>
       </div>
     </div>
@@ -255,14 +296,6 @@ function isDirty(): boolean {
   margin-bottom: 6px;
 }
 
-.uid-val {
-  font-size: 12px;
-  color: var(--vw-purple-light);
-  word-break: break-all;
-  line-height: 1.5;
-  display: block;
-}
-
 .uid-card { display: flex; flex-direction: column; gap: 8px; }
 
 .uid-actions {
@@ -299,6 +332,25 @@ function isDirty(): boolean {
   border-color: var(--vw-purple-mid);
 }
 
+/* Danger-outlined variant — for irreversible operations (account
+   migration). Outlined-not-filled because the action is intentional and
+   user-initiated, not destructive in the "click and the world ends"
+   sense; filled red would over-alarm. The icon + outline + danger text
+   together raise visual weight enough that the eye registers "be sure"
+   before clicking. */
+.copy-btn.danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: color-mix(in srgb, var(--vw-danger) 50%, var(--vw-border2));
+  color: var(--vw-danger);
+}
+.copy-btn.danger:hover:not(:disabled) {
+  color: var(--vw-danger);
+  border-color: var(--vw-danger);
+  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
+}
+
 .hint {
   font-size: 11px;
   color: var(--vw-text3);
@@ -306,6 +358,13 @@ function isDirty(): boolean {
   margin: 6px 0;
 }
 .hint.subtle { font-size: 10px; opacity: 0.85; }
+/* Danger-tinted hint — for the "this is irreversible" line that sits
+   right above a danger-outlined action. Same colour as the button so
+   the eye picks up the visual pairing instantly. */
+.hint.danger-hint {
+  color: var(--vw-danger);
+  font-weight: 500;
+}
 
 .vanish-card { display: flex; flex-direction: column; gap: 4px; }
 

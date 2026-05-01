@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useIdentity } from '../identity'
 import { createSession } from '../sessions'
 import AppLogo from '../components/AppLogo.vue'
+import AppIcon from '../components/AppIcon.vue'
 
 // /join/:uid lands here when someone opens an invite link. We deliberately
 // require an explicit confirmation tap before calling createSession() —
@@ -43,13 +44,16 @@ async function start(): Promise<void> {
     </header>
 
     <div class="join-body">
-      <router-link to="/" class="back-link">← Sessions</router-link>
+      <router-link to="/" class="back-link">
+        <AppIcon name="back" :size="14" />
+        Sessions
+      </router-link>
 
       <div class="section-label">Encrypted invite</div>
 
       <div class="vw-card">
         <div class="field-label">Inviter UID</div>
-        <code class="uid-val">{{ uid }}</code>
+        <code class="crypto-block">{{ uid }}</code>
         <p class="hint">
           You've been invited to start an end-to-end encrypted session.
           Confirm below to generate a new session. The inviter's UID and
@@ -115,14 +119,6 @@ async function start(): Promise<void> {
   letter-spacing: 0.08em;
   color: var(--vw-text3);
   margin-bottom: 6px;
-}
-
-.uid-val {
-  font-size: 12px;
-  color: var(--vw-purple-light);
-  word-break: break-all;
-  line-height: 1.5;
-  display: block;
 }
 
 .hint {
