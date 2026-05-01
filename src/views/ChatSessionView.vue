@@ -29,6 +29,7 @@ import {
   type OpenSession,
   type SessionMeta,
 } from '../sessions'
+import { stickerUrl } from '../stickers'
 import { subscribeDeletedInMinutes } from '../users'
 import { useChatScroll } from '../useChatScroll'
 import { useDocumentDismiss } from '../useDocumentDismiss'
@@ -38,6 +39,12 @@ import { useVanish } from '../useVanish'
 const props = defineProps<{ id: string }>()
 const { labels } = useLabels()
 const router = useRouter()
+
+// Empty-state sticker. Resolved at module load via the bundled sticker
+// registry — same pattern as HomeView's empty hero. `shh` (finger-to-lips
+// Whisp) leans into the brand thesis: "this is a private, vanishing
+// channel — say something, it's safe here".
+const shhSticker = stickerUrl('shh')
 
 const opened = ref<OpenSession | null>(null)
 const messages = ref<ChatMessageRow[]>([])
@@ -599,7 +606,10 @@ async function onAgreeDelete(): Promise<void> {
 
     <!-- Messages -->
     <div v-else-if="opened" ref="messagesContainerRef" class="chat-messages" @scroll="onChatScroll">
-      <p v-if="visibleMessages.length === 0" class="chat-empty">No messages yet — say hi.</p>
+      <div v-if="visibleMessages.length === 0" class="chat-empty">
+        <img v-if="shhSticker" :src="shhSticker" alt="" class="chat-empty-sticker" />
+        <p class="chat-empty-copy">Say something — it'll vanish soon enough.</p>
+      </div>
       <ChatMessageBubble
         v-for="(m, idx) in visibleMessages"
         :key="m.id"
@@ -713,7 +723,26 @@ async function onAgreeDelete(): Promise<void> {
      independently and the input bar stays pinned. */
   height: 100vh;
   height: 100dvh;
-  background: var(--vw-bg);
+  /* Chat-specific atmospheric shift, layered top-to-bottom:
+       (1) bottom-up radial — a soft warm purple glow rising from the
+           input-bar level, like candlelight indoors. Mirrors body's
+           top-down "moonlight" radial, so the metaphor flips from
+           "scene lit by overhead sky" (home / settings) to "scene lit
+           from where you're typing" (chat). The glow is intentionally
+           subtle (12% peak) so the chat reads CALMER than home, not
+           busier — the goal is "I entered a private room", not a
+           visual fanfare.
+       (2) base — slightly cooler / more purple than --vw-bg so even
+           without the radial there's a tonal shift between home (flat
+           --vw-bg) and chat. ~6% mix lands below "obviously different
+           colour" but above "did anything change?" on a side-by-side. */
+  background:
+    radial-gradient(
+      ellipse 70% 35% at 50% 100%,
+      color-mix(in srgb, var(--vw-purple-mid) 12%, transparent) 0%,
+      transparent 70%
+    ),
+    color-mix(in srgb, var(--vw-bg) 94%, var(--vw-purple-deep));
 }
 
 /* ── Header ── */
@@ -828,12 +857,55 @@ async function onAgreeDelete(): Promise<void> {
   text-overflow: ellipsis;
 }
 
-/* ── Chat empty state ── */
+/* ── Chat empty state ──
+   Mirrors HomeView's hero empty state pattern (sticker + copy stacked,
+   centred in the open space) so the main feature surface gets the same
+   brand treatment as the secondary list. The painted `shh` Whisp + a
+   one-liner that connects directly to the vanish thesis replaces what
+   used to be a bare "No messages yet — say hi." text line.
+
+   Copy is set in Fraunces (display) at italic + a high SOFT axis
+   value, picked deliberately:
+     - Fraunces only otherwise appears in the splash wordmark and the
+       chat header title — using it here too gives empty-state copy an
+       editorial register that matches the "you're entering a private
+       channel" mood, and reuses font-family the page already loaded.
+     - 'opsz' 144 hits the largest optical-size (designed for display);
+       'SOFT' 100 maxes out the painterly-serif axis so the line reads
+       like a hand-painted aside, kin to the Whisp mascot's brushwork.
+     - font-style: italic relies on Fraunces Variable's `ital` axis
+       being included in `full.css` (loaded in main.ts). If a future
+       Fontsource refactor strips italic, the browser falls through to
+       synthetic italic — Fraunces is soft enough that it remains
+       legible. */
 .chat-empty {
   margin: auto;
-  font-size: 13px;
-  color: var(--vw-text3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 16px;
+}
+.chat-empty-sticker {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  /* Slightly dimmed so the copy doesn't have to fight the painted
+     mascot for attention — same treatment as HomeView's empty hero. */
+  opacity: 0.78;
+}
+.chat-empty-copy {
+  font-family: var(--vw-font-display);
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 0;
+  font-style: italic;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--vw-text2);
   text-align: center;
+  max-width: 280px;
+  margin: 0;
+  letter-spacing: 0.005em;
 }
 
 /* ── Error banner ── */

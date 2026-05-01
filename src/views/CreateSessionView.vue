@@ -31,7 +31,7 @@ async function submit() {
   <SecondaryPage back-to="/">
     <div class="vw-section-label">New session</div>
 
-    <div class="vw-card uid-display">
+    <div class="vw-card vw-card--hero uid-display">
       <div class="vw-field-label">Your UID (share out-of-band)</div>
       <code class="crypto-block">{{ identity?.uid ?? '…' }}</code>
       <InviteShareButtons @error="(msg) => (error = msg)" />

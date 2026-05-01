@@ -219,12 +219,45 @@ code {
   color: var(--vw-purple-light);
 }
 
+/* ── Reduced motion ──
+   Vestibular-sensitive users get OS-level `prefers-reduced-motion` set.
+   Kill running animations app-wide (msg-deplete progress line, splash
+   stagger, mascot ghost-fade, lightbox-fade, msg-pulse, etc.) — message
+   vanishing is data-driven anyway, so the timer still fires at the
+   right moment, the user just doesn't see the bar deplete.
+   Hover transitions (color, border-color) are intentionally LEFT
+   untouched — those are tactile feedback (not motion) and don't
+   trigger the same vestibular response, so killing them would lose
+   useful UX signal. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+  }
+}
+
 /* ── Utility classes ── */
 .vw-card {
   background: var(--vw-surface2);
   border: 0.5px solid var(--vw-border);
   border-radius: 12px;
   padding: 12px 16px;
+}
+
+/* Hero variant — for the headline card on a secondary page (eg. the UID
+   + share cluster on Profile / Create). Diagonal purple wash from the
+   bottom-right (start sits AT --vw-surface2 so the top-left edge reads
+   continuous with neighbouring cards) plus a brighter --vw-border2 to
+   lift the silhouette. Rest of the card spec is inherited from .vw-card,
+   so .vw-card--hero is always applied IN ADDITION to .vw-card. */
+.vw-card--hero {
+  background: linear-gradient(
+    135deg,
+    var(--vw-surface2) 0%,
+    color-mix(in srgb, var(--vw-purple-deep) 22%, var(--vw-surface2)) 100%
+  );
+  border-color: var(--vw-border2);
 }
 
 .vw-badge-e2e {

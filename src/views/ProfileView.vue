@@ -96,7 +96,7 @@ function formatFingerprint(fp: string | null): string {
   <SecondaryPage back-to="/">
     <div class="vw-section-label">Identity</div>
 
-    <div class="vw-card uid-card">
+    <div class="vw-card vw-card--hero uid-card">
       <div class="vw-field-label">Your UID</div>
       <code class="crypto-block">{{ identity?.uid ?? '…' }}</code>
       <InviteShareButtons @error="(msg) => (error = msg)" />
