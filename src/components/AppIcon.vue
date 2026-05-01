@@ -81,10 +81,7 @@ withDefaults(
 
     <!-- reply: arrow turning back and curving down — reads as "respond
          to this" without needing a label -->
-    <path
-      v-else-if="name === 'reply'"
-      d="M9 14l-4-4 4-4M5 10h9a4 4 0 014 4v4"
-    />
+    <path v-else-if="name === 'reply'" d="M9 14l-4-4 4-4M5 10h9a4 4 0 014 4v4" />
 
     <!-- chevron: rightward by default. Rotate via CSS for down (Archive
          expand state uses .rotate-90). -->

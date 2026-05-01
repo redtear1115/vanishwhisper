@@ -38,9 +38,7 @@ function isOtherDeletePending(s: ChatSessionRow): boolean {
 
 // Three buckets, each sorted by recent activity (sessions are already
 // ordered by updatedAt desc upstream).
-const pinnedSessions = computed(() =>
-  sessions.value.filter((s) => stateOf(s) === 'pinned'),
-)
+const pinnedSessions = computed(() => sessions.value.filter((s) => stateOf(s) === 'pinned'))
 const defaultSessions = computed(() =>
   sessions.value.filter((s) => {
     const st = stateOf(s)
@@ -71,7 +69,8 @@ const archivedSessions = computed(() =>
           :to="{ name: 'profile' }"
           class="me-pill"
           :title="`You — ${identity.uid}\nClick to open profile`"
-        >{{ identity.uid.slice(0, 10) }}…</router-link>
+          >{{ identity.uid.slice(0, 10) }}…</router-link
+        >
         <router-link
           to="/profile"
           class="profile-link"
@@ -90,20 +89,18 @@ const archivedSessions = computed(() =>
         New encrypted session
       </router-link>
 
-      <p v-if="sessionsError" class="vw-text-danger" style="font-size:13px;">
+      <p v-if="sessionsError" class="vw-text-danger" style="font-size: 13px">
         {{ String(sessionsError) }}
       </p>
       <div v-else-if="sessions.length === 0" class="empty-hero">
         <img v-if="helloSticker" :src="helloSticker" alt="" class="empty-hero-sticker" />
-        <p class="empty-hint">
-          No sessions yet — share your UID to start.
-        </p>
+        <p class="empty-hint">No sessions yet — share your UID to start.</p>
       </div>
 
       <template v-else>
         <!-- Pinned section — only when at least one session is pinned. -->
         <template v-if="pinnedSessions.length > 0">
-          <div class="section-label">★ Pinned</div>
+          <div class="vw-section-label">★ Pinned</div>
           <div class="session-list">
             <SessionRow
               v-for="s in pinnedSessions"
@@ -115,7 +112,7 @@ const archivedSessions = computed(() =>
         </template>
 
         <!-- Default section -->
-        <div class="section-label">Your sessions</div>
+        <div class="vw-section-label">Your sessions</div>
         <div v-if="defaultSessions.length === 0" class="empty-inline">
           <img
             v-if="archivedSessions.length > 0 && sleepSticker"
@@ -124,9 +121,11 @@ const archivedSessions = computed(() =>
             class="empty-inline-sticker"
           />
           <p class="empty-hint">
-            {{ archivedSessions.length > 0
-              ? 'Nothing here — your other sessions are archived below.'
-              : 'No active sessions.' }}
+            {{
+              archivedSessions.length > 0
+                ? 'Nothing here — your other sessions are archived below.'
+                : 'No active sessions.'
+            }}
           </p>
         </div>
         <div v-else class="session-list">
@@ -148,11 +147,7 @@ const archivedSessions = computed(() =>
             :aria-expanded="archivedExpanded"
             @click="archivedExpanded = !archivedExpanded"
           >
-            <AppIcon
-              name="chevron"
-              :size="11"
-              :class="{ 'rotate-90': archivedExpanded }"
-            />
+            <AppIcon name="chevron" :size="11" :class="{ 'rotate-90': archivedExpanded }" />
             Archived ({{ archivedSessions.length }})
           </button>
           <div v-if="archivedExpanded" class="session-list">
@@ -195,7 +190,9 @@ const archivedSessions = computed(() =>
   color: var(--vw-text2);
   border: 0.5px solid var(--vw-border);
   text-decoration: none;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 .me-pill:hover {
   color: var(--vw-purple-pale);
@@ -212,7 +209,9 @@ const archivedSessions = computed(() =>
   border-radius: 50%;
   color: var(--vw-text2);
   text-decoration: none;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .profile-link:hover {
   color: var(--vw-purple-pale);
@@ -243,14 +242,6 @@ const archivedSessions = computed(() =>
   font-size: 16px;
   line-height: 1;
   flex-shrink: 0;
-}
-
-.section-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-text3);
-  margin-top: 4px;
 }
 
 .empty-hint {
@@ -331,5 +322,7 @@ const archivedSessions = computed(() =>
   gap: 6px;
   transition: color 0.15s;
 }
-.archive-toggle:hover { color: var(--vw-text2); }
+.archive-toggle:hover {
+  color: var(--vw-text2);
+}
 </style>

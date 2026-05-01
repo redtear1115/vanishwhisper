@@ -16,16 +16,11 @@
 // but this is an SPA chat list where that gesture has no real use case.
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  avatarInitials,
-  avatarScheme,
-  sessionDisplay,
-  setSessionState,
-  useLabels,
-} from '../labels'
+import { sessionDisplay, setSessionState, useLabels } from '../labels'
 import type { ChatSessionRow } from '../sessions'
 import { useDocumentDismiss } from '../useDocumentDismiss'
 import AppIcon from './AppIcon.vue'
+import UserAvatar from './UserAvatar.vue'
 
 const props = defineProps<{
   session: ChatSessionRow
@@ -44,15 +39,8 @@ const display = computed(() =>
     otherShortLen: 12,
   }),
 )
-const initials = computed(() =>
-  avatarInitials(
-    labels.value.get(props.session.id)?.otherName ?? props.session.otherParticipant,
-  ),
-)
-const scheme = computed(() => avatarScheme(props.session.otherParticipant))
-const sessionState = computed(
-  () => labels.value.get(props.session.id)?.state ?? 'default',
-)
+const otherName = computed(() => labels.value.get(props.session.id)?.otherName ?? null)
+const sessionState = computed(() => labels.value.get(props.session.id)?.state ?? 'default')
 
 // Same predicate as the previous HomeView.hasUnread, lifted into the row so
 // the parent doesn't need to know about lastSeenAt / hidden plumbing.
@@ -115,8 +103,12 @@ async function toggleState(target: 'pinned' | 'archived'): Promise<void> {
 // Close on outside-click and Esc. The trigger button + menu wrapper both
 // stop propagation, so anything reaching document is by definition outside.
 useDocumentDismiss({
-  onClickOutside: () => { menuOpen.value = false },
-  onEscape: () => { menuOpen.value = false },
+  onClickOutside: () => {
+    menuOpen.value = false
+  },
+  onEscape: () => {
+    menuOpen.value = false
+  },
 })
 </script>
 
@@ -129,7 +121,7 @@ useDocumentDismiss({
     @click="onRowClick"
     @keydown="onRowKey"
   >
-    <div class="session-avatar" :class="`scheme-${scheme}`">{{ initials }}</div>
+    <UserAvatar :uid="session.otherParticipant" :name="otherName" :size="36" />
     <div class="session-info">
       <span class="session-id">{{ display.primary }}</span>
       <span v-if="display.secondary" class="session-meta">{{ display.secondary }}</span>
@@ -140,10 +132,13 @@ useDocumentDismiss({
         v-if="deletePill"
         class="delete-pending-pill"
         :class="{ theirs: deletePill.theirs }"
-        :title="deletePill.theirs
-          ? 'The other party wants to delete — open to respond'
-          : 'Waiting for the other party to agree to delete'"
-      >{{ deletePill.text }}</span>
+        :title="
+          deletePill.theirs
+            ? 'The other party wants to delete — open to respond'
+            : 'Waiting for the other party to agree to delete'
+        "
+        >{{ deletePill.text }}</span
+      >
       <span class="session-time">{{ timeLabel }}</span>
     </div>
 
@@ -161,11 +156,15 @@ useDocumentDismiss({
       >
         <AppIcon name="more" :size="16" />
       </button>
-      <div v-if="menuOpen" class="row-menu">
-        <button type="button" class="row-menu-item" @click="toggleState('pinned')">
+      <div v-if="menuOpen" class="vw-popover row-menu">
+        <button type="button" class="vw-popover-item row-menu-item" @click="toggleState('pinned')">
           {{ sessionState === 'pinned' ? 'Unpin' : 'Pin to top' }}
         </button>
-        <button type="button" class="row-menu-item" @click="toggleState('archived')">
+        <button
+          type="button"
+          class="vw-popover-item row-menu-item"
+          @click="toggleState('archived')"
+        >
           {{ sessionState === 'archived' ? 'Unarchive' : 'Archive' }}
         </button>
       </div>
@@ -184,10 +183,14 @@ useDocumentDismiss({
   border-radius: 10px;
   text-decoration: none;
   cursor: pointer;
-  transition: border-color 0.15s, opacity 0.15s;
+  transition:
+    border-color 0.15s,
+    opacity 0.15s;
   position: relative;
 }
-.session-item:hover { border-color: var(--vw-border2); }
+.session-item:hover {
+  border-color: var(--vw-border2);
+}
 .session-item:focus-visible {
   outline: none;
   border-color: var(--vw-purple-mid);
@@ -197,27 +200,11 @@ useDocumentDismiss({
 }
 
 /* Archived rows visually softer so they read as "out of focus". */
-.session-item.dim { opacity: 0.7; }
-.session-item.dim:hover { opacity: 1; }
-
-.session-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 500;
-  flex-shrink: 0;
+.session-item.dim {
+  opacity: 0.7;
 }
-.session-avatar.scheme-purple {
-  background: var(--vw-purple-deep);
-  color: var(--vw-purple-pale);
-}
-.session-avatar.scheme-green {
-  background: var(--vw-green-deep);
-  color: var(--vw-green);
+.session-item.dim:hover {
+  opacity: 1;
 }
 
 .session-info {
@@ -294,38 +281,32 @@ useDocumentDismiss({
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .row-menu-btn:hover {
   color: var(--vw-purple-pale);
   background: color-mix(in srgb, var(--vw-purple-pale) 8%, transparent);
 }
+/* Surface chrome inherited from .vw-popover. Local rule carries the
+   per-instance positioning, layout, the slightly cooler --vw-border2
+   border colour, and the heavier 24px shadow that the row's menu uses
+   to read above adjacent rows in a dense list. */
 .row-menu {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
   z-index: 20;
   min-width: 140px;
-  background: var(--vw-surface2);
-  border: 0.5px solid var(--vw-border2);
-  border-radius: 10px;
-  padding: 4px;
   display: flex;
   flex-direction: column;
+  border-color: var(--vw-border2);
   box-shadow: 0 6px 24px color-mix(in srgb, var(--vw-bg) 80%, transparent);
 }
+/* Smaller row context wants a slightly tighter font than the chat-header
+   menu — single-line override on top of .vw-popover-item's 13px default. */
 .row-menu-item {
-  appearance: none;
-  background: none;
-  border: none;
-  text-align: left;
-  font: inherit;
   font-size: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  color: var(--vw-text);
-  cursor: pointer;
-  transition: background 0.1s;
 }
-.row-menu-item:hover { background: var(--vw-surface); }
 </style>

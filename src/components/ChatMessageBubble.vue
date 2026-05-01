@@ -182,7 +182,10 @@ function reactionCount(emoji: string): number {
         :class="{ mine: iReacted(emoji) }"
         @click.stop="emit('react', emoji, iReacted(emoji))"
       >
-        {{ emoji }}<span v-if="reactionCount(emoji) > 0" class="reaction-count"> {{ reactionCount(emoji) }}</span>
+        {{ emoji
+        }}<span v-if="reactionCount(emoji) > 0" class="reaction-count">
+          {{ reactionCount(emoji) }}</span
+        >
       </button>
     </div>
   </div>
@@ -195,15 +198,28 @@ function reactionCount(emoji: string): number {
   max-width: 75%;
   gap: 4px;
 }
-.msg-me   { align-self: flex-end; align-items: flex-end; }
-.msg-them { align-self: flex-start; align-items: flex-start; }
+.msg-me {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.msg-them {
+  align-self: flex-start;
+  align-items: flex-start;
+}
 /* Extra breathing room after the LAST message of a group so the shared meta
    row clearly belongs to the group above and the next group starts visibly
    apart. group-mid messages stay tight against their siblings. */
-.msg-row.group-end { margin-bottom: 10px; }
-.msg-row.group-end:last-child { margin-bottom: 0; }
+.msg-row.group-end {
+  margin-bottom: 10px;
+}
+.msg-row.group-end:last-child {
+  margin-bottom: 0;
+}
 
-.decrypt-err { color: var(--vw-danger); font-style: italic; }
+.decrypt-err {
+  color: var(--vw-danger);
+  font-style: italic;
+}
 
 /* ── Vanish progress line ──
    A 2px track with a mint fill that depletes via a single CSS keyframe.
@@ -240,18 +256,8 @@ function reactionCount(emoji: string): number {
   width: 100%;
   background: var(--vw-green-strong);
   border-radius: 1px;
-  -webkit-mask-image: linear-gradient(
-    to right,
-    black 0%,
-    black 82%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to right,
-    black 0%,
-    black 82%,
-    transparent 100%
-  );
+  -webkit-mask-image: linear-gradient(to right, black 0%, black 82%, transparent 100%);
+  mask-image: linear-gradient(to right, black 0%, black 82%, transparent 100%);
   box-shadow:
     0 0 4px color-mix(in srgb, var(--vw-green-strong) 55%, transparent),
     0 0 10px color-mix(in srgb, var(--vw-green-strong) 25%, transparent);
@@ -260,7 +266,9 @@ function reactionCount(emoji: string): number {
   animation-fill-mode: forwards;
 }
 @keyframes msg-deplete {
-  to { width: 0; }
+  to {
+    width: 0;
+  }
 }
 
 /* ── Meta ── */
@@ -281,7 +289,9 @@ function reactionCount(emoji: string): number {
    a meta row. Hidden by default; revealed on hover. Touch users without
    hover lose discoverability — acceptable trade for desktop cleanness in
    the current phase. */
-.msg-bubble { position: relative; }
+.msg-bubble {
+  position: relative;
+}
 
 /* Shared geometry for all three bubble action buttons (delete / react /
    reply). Each is a 20px circular hover-revealed affordance positioned
@@ -311,10 +321,16 @@ function reactionCount(emoji: string): number {
   padding: 0;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
 }
-.msg-bubble:hover .bubble-delete { opacity: 1; }
-.bubble-delete:hover { color: var(--vw-danger); }
+.msg-bubble:hover .bubble-delete {
+  opacity: 1;
+}
+.bubble-delete:hover {
+  color: var(--vw-danger);
+}
 
 /* Reaction picker trigger — same hover affordance pattern as bubble-delete,
    on the opposite role (inbound only). Top-right of the bubble; absolute
@@ -334,10 +350,16 @@ function reactionCount(emoji: string): number {
   padding: 0;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
 }
-.msg-bubble:hover .bubble-react { opacity: 1; }
-.bubble-react:hover { color: var(--vw-purple-pale); }
+.msg-bubble:hover .bubble-react {
+  opacity: 1;
+}
+.bubble-react:hover {
+  color: var(--vw-purple-pale);
+}
 
 /* ── Reactions ── */
 .reactions-row {
@@ -358,7 +380,9 @@ function reactionCount(emoji: string): number {
   transition: border-color 0.15s;
   color: var(--vw-text);
 }
-.reaction-pill:hover { border-color: var(--vw-purple-light); }
+.reaction-pill:hover {
+  border-color: var(--vw-purple-light);
+}
 /* "Mine" pills go mint instead of purple — splash of secondary colour to
    break up the otherwise all-purple chat. */
 .reaction-pill.mine {
@@ -438,10 +462,16 @@ function reactionCount(emoji: string): number {
   padding: 0;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
 }
-.msg-bubble:hover .bubble-reply { opacity: 1; }
-.bubble-reply:hover { color: var(--vw-purple-pale); }
+.msg-bubble:hover .bubble-reply {
+  opacity: 1;
+}
+.bubble-reply:hover {
+  color: var(--vw-purple-pale);
+}
 /* Touch devices have no hover, so hover-only reveals are invisible there.
    Reveal the action cluster (reply / react / unsend) at low opacity so the
    user can find it, and full opacity when the bubble is tapped (focus-within
@@ -477,16 +507,22 @@ function reactionCount(emoji: string): number {
   text-align: left;
   cursor: pointer;
   display: block;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
-.reply-jump:hover { border-left-color: var(--vw-purple-light); }
+.reply-jump:hover {
+  border-left-color: var(--vw-purple-light);
+}
 .msg-me .reply-jump {
   border-left: none;
   border-right: 2px solid var(--vw-border2);
   padding: 1px 8px 1px 0;
   text-align: right;
 }
-.msg-me .reply-jump:hover { border-right-color: var(--vw-purple-light); }
+.msg-me .reply-jump:hover {
+  border-right-color: var(--vw-purple-light);
+}
 .reply-jump-snippet {
   display: block;
   font-size: 12px;
@@ -498,8 +534,13 @@ function reactionCount(emoji: string): number {
 }
 
 @keyframes msg-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  35%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--vw-purple-light) 35%, transparent); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  35% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--vw-purple-light) 35%, transparent);
+  }
 }
 .msg-row.pulse > .msg-bubble {
   animation: msg-pulse 1.5s ease-in-out;

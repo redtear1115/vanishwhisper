@@ -101,25 +101,19 @@ function cancel(): void {
          and seeing what each label "covers" helps when verifying you're
          naming the right person. -->
     <div class="rename-meta">
-      <p><span class="rename-meta-label">Session id</span> <code>{{ sessionId }}</code></p>
+      <p>
+        <span class="rename-meta-label">Session id</span> <code>{{ sessionId }}</code>
+      </p>
       <p v-if="otherUid">
         <span class="rename-meta-label">Other UID</span> <code>{{ otherUid }}</code>
       </p>
     </div>
 
     <div class="rename-actions">
-      <button
-        type="button"
-        class="vw-btn-primary"
-        :disabled="saving"
-        @click="save"
-      >{{ saving ? 'Saving…' : 'Save' }}</button>
-      <button
-        type="button"
-        class="rename-cancel"
-        :disabled="saving"
-        @click="cancel"
-      >Cancel</button>
+      <button type="button" class="vw-btn-primary" :disabled="saving" @click="save">
+        {{ saving ? 'Saving…' : 'Save' }}
+      </button>
+      <button type="button" class="rename-cancel" :disabled="saving" @click="cancel">Cancel</button>
     </div>
   </div>
 </template>
@@ -167,7 +161,9 @@ function cancel(): void {
   font-size: 11px;
   color: var(--vw-text3);
 }
-.rename-meta p { margin: 0; }
+.rename-meta p {
+  margin: 0;
+}
 .rename-meta-label {
   display: inline-block;
   min-width: 70px;
@@ -194,6 +190,12 @@ function cancel(): void {
   font-size: 13px;
   cursor: pointer;
 }
-.rename-cancel:hover { color: var(--vw-purple-pale); border-color: var(--vw-purple-mid); }
-.rename-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
+.rename-cancel:hover {
+  color: var(--vw-purple-pale);
+  border-color: var(--vw-purple-mid);
+}
+.rename-cancel:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 </style>

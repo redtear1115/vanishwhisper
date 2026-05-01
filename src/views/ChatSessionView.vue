@@ -4,8 +4,9 @@ import { useRouter } from 'vue-router'
 import ChatMessageBubble from '../components/ChatMessageBubble.vue'
 import ChatRenamePanel from '../components/ChatRenamePanel.vue'
 import AppIcon from '../components/AppIcon.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 import { getIdentity } from '../identity'
-import { avatarInitials, avatarScheme, markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
+import { markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
 import { claimOrphanMessages } from '../migration'
 import {
   deleteMessage,
@@ -142,20 +143,11 @@ const headerDisplay = computed(() => {
   })
 })
 
-// Reuse SessionRow's avatar helpers so the same coloured initials a
-// session has on the home list also greet the user inside the chat —
-// makes the visual identity of "this person" continuous across surfaces.
-// Returns null while the session is still loading (no otherParticipant
-// uid yet) — template hides the avatar in that case.
-const headerAvatar = computed(() => {
-  if (!opened.value) return null
-  const otherUid = opened.value.otherParticipant
-  const otherName = labels.value.get(props.id)?.otherName ?? otherUid
-  return {
-    initials: avatarInitials(otherName),
-    scheme: avatarScheme(otherUid),
-  }
-})
+// Other-party label (when the user has set one) drives the chat-header
+// avatar's initials. Falls through to the uid inside UserAvatar when
+// null, matching the home list so the same coloured initials greet the
+// user across surfaces.
+const otherLabelName = computed(() => labels.value.get(props.id)?.otherName ?? null)
 
 let unsub: (() => void) | null = null
 let unsubMyMinutes: (() => void) | null = null
@@ -173,13 +165,21 @@ onMounted(async () => {
     // the new value (cache invalidation handled by the watch below).
     unsubMyMinutes = subscribeDeletedInMinutes(
       me.uid,
-      (m) => { myMinutes.value = m },
-      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+      (m) => {
+        myMinutes.value = m
+      },
+      (err) => {
+        error.value = err instanceof Error ? err.message : String(err)
+      },
     )
     unsubOtherMinutes = subscribeDeletedInMinutes(
       session.otherParticipant,
-      (m) => { otherMinutes.value = m },
-      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+      (m) => {
+        otherMinutes.value = m
+      },
+      (err) => {
+        error.value = err instanceof Error ? err.message : String(err)
+      },
     )
     // Live session metadata (DeleteRequestedBy). When the doc disappears —
     // the OTHER party agreed and cascade-deleted — go back to the home
@@ -195,7 +195,9 @@ onMounted(async () => {
         }
         sessionMeta.value = meta
       },
-      (err) => { error.value = err instanceof Error ? err.message : String(err) },
+      (err) => {
+        error.value = err instanceof Error ? err.message : String(err)
+      },
     )
     unsub = subscribeMessages(
       props.id,
@@ -403,11 +405,7 @@ function isLastOfGroup(idx: number): boolean {
 // the picker. Combined with click-outside-closes (document listener below)
 // this means there's no explicit "close" button — the picker behaves like
 // a transient menu instead of a sticky panel.
-async function onReactAndClose(
-  messageId: string,
-  emoji: string,
-  hasMine: boolean,
-): Promise<void> {
+async function onReactAndClose(messageId: string, emoji: string, hasMine: boolean): Promise<void> {
   pickerOpenFor.value = null
   try {
     await toggleReaction(messageId, emoji, hasMine)
@@ -497,9 +495,7 @@ function jumpToReply(replyId: string): void {
   if (!container) return
   // CSS.escape guards against unusual chars in Firestore doc ids (they're
   // alphanumeric in practice, but the API contract doesn't promise that).
-  const el = container.querySelector<HTMLElement>(
-    `[data-mid="${CSS.escape(replyId)}"]`,
-  )
+  const el = container.querySelector<HTMLElement>(`[data-mid="${CSS.escape(replyId)}"]`)
   if (!el) return
   el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   pulseMid.value = replyId
@@ -577,15 +573,12 @@ async function onAgreeDelete(): Promise<void> {
       <router-link to="/" class="back-btn" aria-label="Back to sessions">
         <AppIcon name="back" :size="18" />
       </router-link>
-      <div
-        v-if="headerAvatar"
-        class="chat-header-avatar"
-        :class="`scheme-${headerAvatar.scheme}`"
-        aria-hidden="true"
-      >{{ headerAvatar.initials }}</div>
+      <UserAvatar v-if="opened" :uid="opened.otherParticipant" :name="otherLabelName" :size="28" />
       <div class="chat-header-info">
         <span class="chat-title">{{ headerDisplay.primary }}</span>
-        <span v-if="headerDisplay.secondary" class="chat-subtitle">{{ headerDisplay.secondary }}</span>
+        <span v-if="headerDisplay.secondary" class="chat-subtitle">{{
+          headerDisplay.secondary
+        }}</span>
       </div>
       <button
         type="button"
@@ -598,22 +591,22 @@ async function onAgreeDelete(): Promise<void> {
       </button>
       <span class="vw-badge-e2e">E2E</span>
 
-      <div v-if="menuOpen" class="header-menu" @click.stop>
+      <div v-if="menuOpen" class="vw-popover header-menu" @click.stop>
         <!-- Session-internal actions only. List-management (Pin / Archive)
              lives in the home row's per-row ⋯ menu, since those are about
              how the row sits in the home list rather than the chat itself. -->
-        <button type="button" class="header-menu-item" @click="onMenuRename">Rename</button>
-        <button
-          type="button"
-          class="header-menu-item"
-          @click="onMenuToggleHide"
-        >{{ sessionHidden ? 'Show messages' : 'Hide messages' }}</button>
+        <button type="button" class="vw-popover-item" @click="onMenuRename">Rename</button>
+        <button type="button" class="vw-popover-item" @click="onMenuToggleHide">
+          {{ sessionHidden ? 'Show messages' : 'Hide messages' }}
+        </button>
         <button
           v-if="deleteRequestState === 'none'"
           type="button"
-          class="header-menu-item danger"
+          class="vw-popover-item danger"
           @click="onMenuRequestDelete"
-        >Request delete</button>
+        >
+          Request delete
+        </button>
       </div>
     </header>
 
@@ -627,7 +620,9 @@ async function onAgreeDelete(): Promise<void> {
     <!-- Mutual-delete banner. Two flavours depending on who requested. -->
     <div v-if="deleteRequestState === 'mine'" class="delete-banner mine">
       <span>Waiting for the other party to agree to delete this session…</span>
-      <button type="button" class="delete-banner-btn" @click="onCancelOrReject">Cancel request</button>
+      <button type="button" class="delete-banner-btn" @click="onCancelOrReject">
+        Cancel request
+      </button>
     </div>
     <div v-else-if="deleteRequestState === 'theirs'" class="delete-banner theirs">
       <span>The other party wants to delete this session and all messages.</span>
@@ -637,13 +632,17 @@ async function onAgreeDelete(): Promise<void> {
           class="delete-banner-btn danger"
           :disabled="deleting"
           @click="onAgreeDelete"
-        >{{ deleting ? 'Deleting…' : 'Agree & delete' }}</button>
+        >
+          {{ deleting ? 'Deleting…' : 'Agree & delete' }}
+        </button>
         <button
           type="button"
           class="delete-banner-btn"
           :disabled="deleting"
           @click="onCancelOrReject"
-        >Reject</button>
+        >
+          Reject
+        </button>
       </div>
     </div>
 
@@ -652,19 +651,12 @@ async function onAgreeDelete(): Promise<void> {
 
     <!-- Loading -->
     <div v-if="!opened && !error" class="chat-loading">
-      <p style="font-size:13px;color:var(--vw-text3);">Opening session…</p>
+      <p style="font-size: 13px; color: var(--vw-text3)">Opening session…</p>
     </div>
 
     <!-- Messages -->
-    <div
-      v-else-if="opened"
-      ref="messagesContainerRef"
-      class="chat-messages"
-      @scroll="onChatScroll"
-    >
-      <p v-if="visibleMessages.length === 0" class="chat-empty">
-        No messages yet — say hi.
-      </p>
+    <div v-else-if="opened" ref="messagesContainerRef" class="chat-messages" @scroll="onChatScroll">
+      <p v-if="visibleMessages.length === 0" class="chat-empty">No messages yet — say hi.</p>
       <ChatMessageBubble
         v-for="(m, idx) in visibleMessages"
         :key="m.id"
@@ -694,12 +686,7 @@ async function onAgreeDelete(): Promise<void> {
     <Teleport to="body">
       <div v-if="lightboxUrl" class="lightbox" @click="closeLightbox">
         <img :src="lightboxUrl" class="lightbox-image" alt="" />
-        <button
-          type="button"
-          class="lightbox-close"
-          aria-label="Close"
-          @click.stop="closeLightbox"
-        >
+        <button type="button" class="lightbox-close" aria-label="Close" @click.stop="closeLightbox">
           <AppIcon name="close" :size="20" />
         </button>
       </div>
@@ -761,18 +748,14 @@ async function onAgreeDelete(): Promise<void> {
         placeholder="Type a message…"
         required
       />
-      <button
-        type="submit"
-        class="vw-btn-send"
-        :disabled="sending || sendingImage || !draft"
-      >
+      <button type="submit" class="vw-btn-send" :disabled="sending || sendingImage || !draft">
         <span class="send-icon" />
       </button>
 
       <!-- Sticker picker — floats above the input bar. .stop on inner
            clicks so the document-click-to-close handler doesn't fire when
            the user picks something inside. -->
-      <div v-if="stickerPickerOpen" class="sticker-picker" @click.stop>
+      <div v-if="stickerPickerOpen" class="vw-popover sticker-picker" @click.stop>
         <button
           v-for="s in STICKERS"
           :key="s.key"
@@ -827,38 +810,13 @@ async function onAgreeDelete(): Promise<void> {
   color: var(--vw-purple-light);
   text-decoration: none;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .back-btn:hover {
   color: var(--vw-purple-pale);
   background: var(--vw-surface2);
-}
-
-/* Per-conversation avatar in the chat header. Same coloured-initials
-   convention SessionRow uses on the home list — when you tap into a
-   chat, the visual identity of "this person" persists from the row
-   into the chat. Sized smaller (28px vs 36px on the row) so it doesn't
-   crowd the back button + title. The two scheme classes mirror
-   SessionRow's exactly so the colour assignment per uid is stable
-   across surfaces. */
-.chat-header-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-.chat-header-avatar.scheme-purple {
-  background: var(--vw-purple-deep);
-  color: var(--vw-purple-pale);
-}
-.chat-header-avatar.scheme-green {
-  background: var(--vw-green-deep);
-  color: var(--vw-green);
 }
 
 /* The header info area is now non-interactive display — session-level
@@ -878,7 +836,10 @@ async function onAgreeDelete(): Promise<void> {
      conversation. Lower opsz (smaller optical-size) keeps it readable
      at this small a size. SOFT moderate, WONK off for a calmer header. */
   font-family: var(--vw-font-display);
-  font-variation-settings: 'opsz' 14, 'SOFT' 40, 'WONK' 0;
+  font-variation-settings:
+    'opsz' 14,
+    'SOFT' 40,
+    'WONK' 0;
   font-size: 14px;
   font-weight: 500;
   color: var(--vw-text);
@@ -901,7 +862,9 @@ async function onAgreeDelete(): Promise<void> {
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .header-menu-btn:hover {
   color: var(--vw-purple-pale);
@@ -910,39 +873,19 @@ async function onAgreeDelete(): Promise<void> {
 
 /* Dropdown anchored to the bottom-right of the chat header; absolute
    inside .chat-header (which is position:relative). z-index above the
-   message list and the rename panel. */
+   message list and the rename panel. Surface chrome comes from .vw-popover
+   in theme.css; this rule only carries the per-instance positioning,
+   layout, and the slightly tighter 8px radius. */
 .header-menu {
   position: absolute;
   top: calc(100% + 4px);
   right: 12px;
   min-width: 180px;
-  background: var(--vw-surface2);
-  border: 0.5px solid var(--vw-border);
-  border-radius: 8px;
-  padding: 4px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   z-index: 100;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--vw-bg) 80%, transparent);
-}
-
-.header-menu-item {
-  background: none;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--vw-text);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  transition: background 0.15s, color 0.15s;
-}
-.header-menu-item:hover { background: var(--vw-surface); }
-.header-menu-item.danger { color: var(--vw-danger); }
-.header-menu-item.danger:hover {
-  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
+  border-radius: 8px;
 }
 
 .chat-subtitle {
@@ -972,7 +915,10 @@ async function onAgreeDelete(): Promise<void> {
   background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
   color: var(--vw-danger);
 }
-.delete-banner span { flex: 1; min-width: 200px; }
+.delete-banner span {
+  flex: 1;
+  min-width: 200px;
+}
 .delete-banner-actions {
   display: flex;
   gap: 8px;
@@ -990,7 +936,10 @@ async function onAgreeDelete(): Promise<void> {
 .delete-banner-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--vw-text) 6%, transparent);
 }
-.delete-banner-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.delete-banner-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .delete-banner-btn.danger {
   background: var(--vw-danger);
   border-color: var(--vw-danger);
@@ -1039,9 +988,16 @@ async function onAgreeDelete(): Promise<void> {
      `.group-end { margin-bottom }` below. */
   gap: 4px;
 }
-.chat-messages::-webkit-scrollbar { width: 4px; }
-.chat-messages::-webkit-scrollbar-track { background: transparent; }
-.chat-messages::-webkit-scrollbar-thumb { background: var(--vw-border2); border-radius: 2px; }
+.chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-messages::-webkit-scrollbar-thumb {
+  background: var(--vw-border2);
+  border-radius: 2px;
+}
 
 /* ── Input bar ── */
 .input-bar {
@@ -1066,7 +1022,10 @@ async function onAgreeDelete(): Promise<void> {
   margin-left: 2px;
 }
 
-.vw-btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.vw-btn-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* ── Attach button + hidden file input ── */
 .attach-btn {
@@ -1082,13 +1041,18 @@ async function onAgreeDelete(): Promise<void> {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .attach-btn:hover:not(:disabled) {
   color: var(--vw-purple-pale);
   background: var(--vw-surface2);
 }
-.attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.attach-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .file-input-hidden {
   display: none;
@@ -1098,14 +1062,15 @@ async function onAgreeDelete(): Promise<void> {
    `position: absolute` anchored to .input-bar (which gets position:relative
    below). Width matches the input area minus a little gutter so it visually
    "belongs" to the input row. Three columns × three rows for the bundled
-   nine stickers. */
+   nine stickers. Surface chrome comes from .vw-popover; the inverted
+   shadow direction (negative y) is the one piece that has to be local —
+   the picker pops UP from the input bar so the shadow needs to fall
+   above it, opposite of the dropdown menus that fall below their trigger. */
 .sticker-picker {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 8px;
   right: 8px;
-  background: var(--vw-surface2);
-  border: 0.5px solid var(--vw-border);
   border-radius: 12px;
   padding: 10px;
   display: grid;
@@ -1125,7 +1090,9 @@ async function onAgreeDelete(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, transform 0.15s;
+  transition:
+    background 0.15s,
+    transform 0.15s;
 }
 .sticker-picker-item:hover {
   background: var(--vw-surface);
@@ -1156,8 +1123,12 @@ async function onAgreeDelete(): Promise<void> {
   animation: lightbox-fade 0.12s ease-out;
 }
 @keyframes lightbox-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .lightbox-image {
   max-width: 95vw;
@@ -1228,5 +1199,7 @@ async function onAgreeDelete(): Promise<void> {
   flex-shrink: 0;
   transition: color 0.15s;
 }
-.reply-preview-close:hover { color: var(--vw-purple-pale); }
+.reply-preview-close:hover {
+  color: var(--vw-purple-pale);
+}
 </style>

@@ -27,10 +27,13 @@ const props = defineProps<{
 // target px on the GPU rather than us paying full-resolution paint cost).
 const iconPx = computed(() => {
   switch (props.size) {
-    case 'sm': return 32
-    case 'lg': return 60
+    case 'sm':
+      return 32
+    case 'lg':
+      return 60
     case 'md':
-    default:   return 44
+    default:
+      return 44
   }
 })
 </script>
@@ -73,14 +76,23 @@ const iconPx = computed(() => {
      wonky letterforms tie the wordmark visually to the painted Whisp.
      See theme.css for the variable axis comments. */
   font-family: var(--vw-font-display);
-  font-variation-settings: 'opsz' 144, 'SOFT' 60, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 144,
+    'SOFT' 60,
+    'WONK' 1;
   font-weight: 500;
   letter-spacing: -0.005em;
   color: var(--vw-purple-pale);
   white-space: nowrap;
 }
 
-.sm .logo-text { font-size: 14px; }
-.md .logo-text { font-size: 16px; }
-.lg .logo-text { font-size: 20px; }
+.sm .logo-text {
+  font-size: 14px;
+}
+.md .logo-text {
+  font-size: 16px;
+}
+.lg .logo-text {
+  font-size: 20px;
+}
 </style>

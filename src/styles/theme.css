@@ -7,31 +7,31 @@
 
 :root {
   /* ── Background layers ── */
-  --vw-bg:       #0D0A14;
-  --vw-surface:  #16101F;
-  --vw-surface2: #1E1530;
-  --vw-border:   #2D1F45;
-  --vw-border2:  #3D2A5F;
+  --vw-bg: #0d0a14;
+  --vw-surface: #16101f;
+  --vw-surface2: #1e1530;
+  --vw-border: #2d1f45;
+  --vw-border2: #3d2a5f;
 
   /* ── Purple palette ── */
-  --vw-purple-deep:  #5B0888;
-  --vw-purple-mid:   #713ABE;
-  --vw-purple-light: #9D76C1;
-  --vw-purple-pale:  #E5CFF7;
+  --vw-purple-deep: #5b0888;
+  --vw-purple-mid: #713abe;
+  --vw-purple-light: #9d76c1;
+  --vw-purple-pale: #e5cff7;
 
   /* ── Mint green (secondary) ── */
-  --vw-green:       #A8D8A8;
-  --vw-green-strong: #7BC47B;
-  --vw-green-deep:  #1C3A20;
-  --vw-green-dim:   #1A2A1A;
+  --vw-green: #a8d8a8;
+  --vw-green-strong: #7bc47b;
+  --vw-green-deep: #1c3a20;
+  --vw-green-dim: #1a2a1a;
 
   /* ── Text ── */
-  --vw-text:  #EDE0FF;
-  --vw-text2: #A688C8;
-  --vw-text3: #6B4D8A;
+  --vw-text: #ede0ff;
+  --vw-text2: #a688c8;
+  --vw-text3: #6b4d8a;
 
   /* ── Danger ── */
-  --vw-danger: #E85C7A;
+  --vw-danger: #e85c7a;
 
   /* ── Typography ──
      Three roles, each on a self-hosted variable font (loaded in main.ts):
@@ -66,17 +66,14 @@
          better than a tofu rectangle.
      Quoted strings for multi-word names; bare for single tokens. */
   --vw-font-display:
-    'Fraunces Variable', Georgia, 'Times New Roman',
-    'Songti TC', 'Songti SC', 'PMingLiU', 'Noto Serif TC', 'Source Han Serif TC',
-    serif;
+    'Fraunces Variable', Georgia, 'Times New Roman', 'Songti TC', 'Songti SC', 'PMingLiU',
+    'Noto Serif TC', 'Source Han Serif TC', serif;
   --vw-font-body:
-    'Figtree Variable', system-ui, -apple-system,
-    'PingFang TC', 'Microsoft JhengHei', 'Noto Sans TC', 'Noto Sans CJK TC',
-    sans-serif;
+    'Figtree Variable', system-ui, -apple-system, 'PingFang TC', 'Microsoft JhengHei',
+    'Noto Sans TC', 'Noto Sans CJK TC', sans-serif;
   --vw-font-mono:
-    'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', Menlo,
-    'PingFang TC', 'Microsoft JhengHei', 'Noto Sans Mono CJK TC',
-    monospace;
+    'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', Menlo, 'PingFang TC',
+    'Microsoft JhengHei', 'Noto Sans Mono CJK TC', monospace;
 
   /* ── Atmosphere ──
      A 160×160 SVG noise tile, served as a data URL so it costs zero extra
@@ -90,7 +87,9 @@
 }
 
 /* ── Reset & base ── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -100,7 +99,8 @@
    total content height past 100dvh — producing a faint always-on
    scrollbar. Resetting both html and body ensures the column starts at
    the viewport edge with no excess scrollable area. */
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   /* Defensive horizontal-overflow guard. iOS Safari occasionally
@@ -181,7 +181,8 @@ body {
   }
 }
 
-html, body {
+html,
+body {
   overscroll-behavior-y: none;
 }
 
@@ -208,7 +209,9 @@ a {
   color: var(--vw-purple-light);
   text-decoration: none;
 }
-a:hover { color: var(--vw-purple-pale); }
+a:hover {
+  color: var(--vw-purple-pale);
+}
 
 code {
   font-family: var(--vw-font-mono);
@@ -263,7 +266,9 @@ code {
   cursor: pointer;
   transition: background 0.15s;
 }
-.vw-btn-primary:hover { background: var(--vw-purple-mid); }
+.vw-btn-primary:hover {
+  background: var(--vw-purple-mid);
+}
 
 .vw-btn-send {
   width: 36px;
@@ -278,7 +283,9 @@ code {
   flex-shrink: 0;
   transition: background 0.15s;
 }
-.vw-btn-send:hover { background: var(--vw-purple-deep); }
+.vw-btn-send:hover {
+  background: var(--vw-purple-deep);
+}
 
 .vw-input {
   /* Inputs sit one layer DEEPER than the surrounding bar (--vw-surface)
@@ -294,7 +301,9 @@ code {
   outline: none;
   transition: border-color 0.15s;
 }
-.vw-input::placeholder { color: var(--vw-text3); }
+.vw-input::placeholder {
+  color: var(--vw-text3);
+}
 .vw-input:focus {
   border-color: var(--vw-purple-mid);
   /* Soft purple halo on focus — phosphor-on-dark feel that matches the
@@ -314,7 +323,9 @@ code {
   flex: 1;
   outline: none;
 }
-.vw-input-pill::placeholder { color: var(--vw-text3); }
+.vw-input-pill::placeholder {
+  color: var(--vw-text3);
+}
 .vw-input-pill:focus {
   border-color: var(--vw-purple-mid);
   /* Same focus halo as .vw-input — see comment there. */
@@ -330,10 +341,63 @@ code {
   background: var(--vw-surface);
 }
 
-.vw-text-muted   { color: var(--vw-text2); }
-.vw-text-hint    { color: var(--vw-text3); }
-.vw-text-danger  { color: var(--vw-danger); }
-.vw-text-green   { color: var(--vw-green-strong); }
+/* ── Eyebrow labels ──
+   Section-label sits between cards (eg. above a `vw-card` group of
+   related fields); field-label sits inside a card to name a specific
+   field. They share core styling — same 10px upper, 0.08em tracking,
+   --vw-text3 colour — but the two class names exist so templates convey
+   the role distinction.
+
+   Margins are baked in because field-label commonly sits inside a
+   non-flex `.vw-card` (which has only padding, no gap), so without
+   margin-bottom the label would crash into the value below. Section-label
+   gets a small margin-top so back-to-back sections don't sit flush
+   against the preceding card's bottom edge. Inside a flex-with-gap
+   parent these add to the gap rather than collapsing — a few extra px
+   of breathing, which Profile/Migrate/Home already had locally. */
+.vw-section-label,
+.vw-field-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vw-text3);
+}
+.vw-section-label {
+  margin-top: 4px;
+}
+.vw-field-label {
+  margin-bottom: 6px;
+}
+
+/* ── Back link ──
+   Used at the top of every secondary page (Profile / Create / Join /
+   Migrate) above a `<SecondaryPage>` body slot. inline-flex so the icon
+   sits flush with the text baseline. Hover brightens to --vw-purple-pale,
+   matching the rest of the link/ghost-button hover system. */
+.vw-back-link {
+  font-size: 12px;
+  color: var(--vw-purple-light);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.vw-back-link:hover {
+  color: var(--vw-purple-pale);
+}
+
+.vw-text-muted {
+  color: var(--vw-text2);
+}
+.vw-text-hint {
+  color: var(--vw-text3);
+}
+.vw-text-danger {
+  color: var(--vw-danger);
+}
+.vw-text-green {
+  color: var(--vw-green-strong);
+}
 
 /* ── Cryptographic-object surfaces ──
    For UIDs, fingerprints, and other "this is a permanent value you
@@ -380,6 +444,59 @@ code {
   font-size: 14px;
   letter-spacing: 0.06em;
   color: var(--vw-purple-pale);
+}
+
+/* ── Popover surface ──
+   Shared chrome for floating menus / pickers anchored to a trigger button
+   (chat header ⋯ menu, session row ⋯ menu, sticker picker, future reaction
+   pickers, etc.). Provides only the surface (background + border + shadow
+   + base padding + radius); consumers set their own position
+   (top/bottom/left/right + z-index), internal layout (flex column for
+   menus, grid for picker), and override radius/padding/shadow when the
+   existing visual differs. The shared chrome means new popovers
+   automatically match the visual identity of existing ones, and a future
+   redesign of the surface (e.g. heavier shadow, different radius) lands
+   in one place.
+
+   Default radius is 10px — matches the previous SessionRow row-menu and
+   sits between header-menu (8px) and sticker-picker (12px); each consumer
+   overrides as needed to preserve current visuals. */
+.vw-popover {
+  background: var(--vw-surface2);
+  border: 0.5px solid var(--vw-border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--vw-bg) 80%, transparent);
+}
+
+/* Menu-item button inside a .vw-popover. `font: inherit` strips browser
+   button defaults so the text picks up the surrounding view's typography
+   (the chat-header menu thus reads at the same baseline as the chat
+   itself). The .danger variant — currently used for "Request delete" —
+   tints the foreground red and gives hover a faint danger wash. */
+.vw-popover-item {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--vw-text);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.vw-popover-item:hover {
+  background: var(--vw-surface);
+}
+.vw-popover-item.danger {
+  color: var(--vw-danger);
+}
+.vw-popover-item.danger:hover {
+  background: color-mix(in srgb, var(--vw-danger) 12%, transparent);
 }
 
 /* ── Chat bubbles ── */

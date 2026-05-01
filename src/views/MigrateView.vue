@@ -29,8 +29,7 @@ import {
   type SessionToMigrate,
   type TargetIdentity,
 } from '../migration'
-import AppLogo from '../components/AppLogo.vue'
-import AppIcon from '../components/AppIcon.vue'
+import SecondaryPage from '../components/SecondaryPage.vue'
 
 const { identity } = useIdentity()
 
@@ -125,188 +124,139 @@ function formatFingerprint(fp: string | null): string {
 </script>
 
 <template>
-  <div class="migrate">
-    <header class="vw-topbar">
-      <AppLogo size="sm" />
-    </header>
+  <SecondaryPage back-to="/profile" back-label="Profile">
+    <h1 class="title">Move account to another device</h1>
 
-    <div class="migrate-body">
-      <router-link to="/profile" class="back-link">
-        <AppIcon name="back" :size="14" />
-        Profile
-      </router-link>
+    <div class="vw-card">
+      <p class="hint">
+        Transfers your sessions and message history to a new device of yours. Your old account
+        becomes empty (this device's UID is no longer a participant in any chat); the other parties
+        keep being able to read every message — they just see your UID change in their UI.
+      </p>
+      <p class="hint subtle">
+        ⚠ Only works while THIS device is online and signed in. If you lose this device before
+        migrating, the sessions are gone for good — by design.
+      </p>
+    </div>
 
-      <h1 class="title">Move account to another device</h1>
+    <!-- Step 1 — explain how to fetch new device UID -->
+    <div class="vw-section-label">Step 1 — On your new device</div>
+    <div class="vw-card">
+      <p class="hint">
+        Install / open VanishWhisper on the new device. Open its <strong>Profile</strong> page.
+        You'll see a <code>Your UID</code> field and a <code>Key fingerprint</code>. Keep that
+        screen visible — you'll compare the fingerprint against this device in a moment.
+      </p>
+    </div>
+
+    <!-- Step 2 — paste UID, look up fingerprint -->
+    <div class="vw-section-label">Step 2 — Paste the new device's UID here</div>
+    <div class="vw-card">
+      <input
+        v-model="draftUid"
+        type="text"
+        class="vw-input uid-input"
+        placeholder="Paste new device UID"
+        :disabled="looking || state === 'running' || state === 'done'"
+        @keydown.enter="lookup"
+      />
+      <div class="actions">
+        <button
+          type="button"
+          class="vw-btn-primary"
+          :disabled="!draftUid.trim() || looking || state === 'running' || state === 'done'"
+          @click="lookup"
+        >
+          {{ looking ? 'Looking up…' : 'Look up' }}
+        </button>
+      </div>
+      <p v-if="lookupError" class="vw-text-danger">{{ lookupError }}</p>
+    </div>
+
+    <!-- Step 3 — verify fingerprint, confirm, migrate -->
+    <template v-if="target">
+      <div class="vw-section-label">Step 3 — Verify the fingerprint matches</div>
+      <div class="vw-card">
+        <div class="vw-field-label">New device's key fingerprint</div>
+        <code class="crypto-block fingerprint">{{ formatFingerprint(target.fingerprint) }}</code>
+        <p class="hint">
+          On your new device, open <strong>Profile</strong> and check the
+          <code>Key fingerprint</code>. The two must be byte-for-byte identical. If they differ,
+          you've entered the wrong UID — DO NOT proceed.
+        </p>
+        <label class="verify-row">
+          <input
+            v-model="verified"
+            type="checkbox"
+            :disabled="state === 'running' || state === 'done'"
+          />
+          <span>I've verified the fingerprint matches what my new device shows.</span>
+        </label>
+      </div>
 
       <div class="vw-card">
         <p class="hint">
-          Transfers your sessions and message history to a new device of yours. Your old account
-          becomes empty (this device's UID is no longer a participant in any chat); the other
-          parties keep being able to read every message — they just see your UID change in their
-          UI.
+          <strong>{{ sessions.length }} session{{ sessions.length === 1 ? '' : 's' }}</strong>
+          and
+          <strong>{{ labelCount }} local label{{ labelCount === 1 ? '' : 's' }}</strong>
+          (custom names, pin / archive / hide state) will be moved. After this, opening
+          VanishWhisper on this device will show an empty home — your sessions live with the new
+          UID.
         </p>
-        <p class="hint subtle">
-          ⚠ Only works while THIS device is online and signed in. If you lose this device before
-          migrating, the sessions are gone for good — by design.
+        <p v-if="sessions.length === 0 && labelCount > 0" class="hint subtle">
+          Sessions are already on the new UID; this run only ships the labels across.
         </p>
-      </div>
-
-      <!-- Step 1 — explain how to fetch new device UID -->
-      <div class="section-label">Step 1 — On your new device</div>
-      <div class="vw-card">
-        <p class="hint">
-          Install / open VanishWhisper on the new device. Open its <strong>Profile</strong> page.
-          You'll see a <code>Your UID</code> field and a <code>Key fingerprint</code>. Keep that
-          screen visible — you'll compare the fingerprint against this device in a moment.
-        </p>
-      </div>
-
-      <!-- Step 2 — paste UID, look up fingerprint -->
-      <div class="section-label">Step 2 — Paste the new device's UID here</div>
-      <div class="vw-card">
-        <input
-          v-model="draftUid"
-          type="text"
-          class="vw-input uid-input"
-          placeholder="Paste new device UID"
-          :disabled="looking || state === 'running' || state === 'done'"
-          @keydown.enter="lookup"
-        />
         <div class="actions">
           <button
             type="button"
             class="vw-btn-primary"
-            :disabled="!draftUid.trim() || looking || state === 'running' || state === 'done'"
-            @click="lookup"
-          >{{ looking ? 'Looking up…' : 'Look up' }}</button>
+            :disabled="!verified || !hasWorkToDo || state === 'running' || state === 'done'"
+            @click="run"
+          >
+            {{
+              state === 'running'
+                ? `Migrating… (${progressDone}/${progressTotal})`
+                : state === 'done'
+                  ? '✓ Done'
+                  : sessions.length > 0
+                    ? `Migrate ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
+                    : `Send ${labelCount} label${labelCount === 1 ? '' : 's'}`
+            }}
+          </button>
         </div>
-        <p v-if="lookupError" class="vw-text-danger">{{ lookupError }}</p>
+
+        <div v-if="state === 'running'" class="progress-wrap">
+          <div class="progress-bar" :style="{ width: progressPct + '%' }" />
+        </div>
+
+        <p v-if="state === 'done'" class="vw-text-green done-msg">
+          Migration complete.
+          <span v-if="labelsApplied > 0">
+            {{ labelsApplied }} label{{ labelsApplied === 1 ? '' : 's' }} encrypted and queued —
+            your new device will pick them up on its next launch.
+          </span>
+          You can close this app on this device and clear its data when convenient.
+        </p>
+        <p v-if="runError" class="vw-text-danger">{{ runError }}</p>
       </div>
+    </template>
 
-      <!-- Step 3 — verify fingerprint, confirm, migrate -->
-      <template v-if="target">
-        <div class="section-label">Step 3 — Verify the fingerprint matches</div>
-        <div class="vw-card">
-          <div class="field-label">New device's key fingerprint</div>
-          <code class="crypto-block fingerprint">{{ formatFingerprint(target.fingerprint) }}</code>
-          <p class="hint">
-            On your new device, open <strong>Profile</strong> and check the
-            <code>Key fingerprint</code>. The two must be byte-for-byte identical. If they differ,
-            you've entered the wrong UID — DO NOT proceed.
-          </p>
-          <label class="verify-row">
-            <input
-              v-model="verified"
-              type="checkbox"
-              :disabled="state === 'running' || state === 'done'"
-            />
-            <span>I've verified the fingerprint matches what my new device shows.</span>
-          </label>
-        </div>
-
-        <div class="vw-card">
-          <p class="hint">
-            <strong>{{ sessions.length }} session{{ sessions.length === 1 ? '' : 's' }}</strong>
-            and
-            <strong>{{ labelCount }} local label{{ labelCount === 1 ? '' : 's' }}</strong>
-            (custom names, pin / archive / hide state) will be moved. After this, opening
-            VanishWhisper on this device will show an empty home — your sessions live with the
-            new UID.
-          </p>
-          <p v-if="sessions.length === 0 && labelCount > 0" class="hint subtle">
-            Sessions are already on the new UID; this run only ships the labels across.
-          </p>
-          <div class="actions">
-            <button
-              type="button"
-              class="vw-btn-primary"
-              :disabled="!verified || !hasWorkToDo || state === 'running' || state === 'done'"
-              @click="run"
-            >
-              {{
-                state === 'running'
-                  ? `Migrating… (${progressDone}/${progressTotal})`
-                  : state === 'done'
-                    ? '✓ Done'
-                    : sessions.length > 0
-                      ? `Migrate ${sessions.length} session${sessions.length === 1 ? '' : 's'}`
-                      : `Send ${labelCount} label${labelCount === 1 ? '' : 's'}`
-              }}
-            </button>
-          </div>
-
-          <div v-if="state === 'running'" class="progress-wrap">
-            <div class="progress-bar" :style="{ width: progressPct + '%' }" />
-          </div>
-
-          <p v-if="state === 'done'" class="vw-text-green done-msg">
-            Migration complete.
-            <span v-if="labelsApplied > 0">
-              {{ labelsApplied }} label{{ labelsApplied === 1 ? '' : 's' }} encrypted and queued
-              — your new device will pick them up on its next launch.
-            </span>
-            You can close this app on this device and clear its data when convenient.
-          </p>
-          <p v-if="runError" class="vw-text-danger">{{ runError }}</p>
-        </div>
-      </template>
-
-      <!-- Bottom hint: this device's own fingerprint, in case the user
+    <!-- Bottom hint: this device's own fingerprint, in case the user
            wants to read it out the OTHER direction (new device verifying
            old). Not load-bearing for the migration but cheap to surface. -->
-      <p v-if="identity" class="hint subtle bottom-fp">
-        For reference, this device's UID is
-        <code>{{ identity.uid.slice(0, 12) }}…</code>.
-      </p>
-    </div>
-  </div>
+    <p v-if="identity" class="hint subtle bottom-fp">
+      For reference, this device's UID is
+      <code>{{ identity.uid.slice(0, 12) }}…</code>.
+    </p>
+  </SecondaryPage>
 </template>
 
 <style scoped>
-.migrate {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-.migrate-body {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.back-link {
-  font-size: 12px;
-  color: var(--vw-purple-light);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.back-link:hover { color: var(--vw-purple-pale); }
-
 .title {
   font-size: 18px;
   font-weight: 500;
   color: var(--vw-text);
   margin: 4px 0 0;
-}
-
-.section-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-text3);
-  margin-top: 4px;
-}
-
-.field-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-text3);
-  margin-bottom: 6px;
 }
 
 .hint {
@@ -315,14 +265,16 @@ function formatFingerprint(fp: string | null): string {
   line-height: 1.5;
   margin: 0;
 }
-.hint.subtle { color: var(--vw-text3); font-size: 11px; }
+.hint.subtle {
+  color: var(--vw-text3);
+  font-size: 11px;
+}
 
 .uid-input {
   width: 100%;
   font-family: var(--vw-font-mono);
   font-size: 12px;
 }
-
 
 .verify-row {
   display: flex;
@@ -333,7 +285,10 @@ function formatFingerprint(fp: string | null): string {
   margin-top: 10px;
   cursor: pointer;
 }
-.verify-row input { margin-top: 2px; cursor: pointer; }
+.verify-row input {
+  margin-top: 2px;
+  cursor: pointer;
+}
 
 .actions {
   display: flex;
