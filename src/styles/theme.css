@@ -165,12 +165,15 @@ body {
     position: fixed;
     bottom: 6vh;
     right: 4vw;
-    width: 160px;
-    height: 160px;
+    width: 200px;
+    height: 200px;
     background: url('../assets/whisp-mascot.png') no-repeat center / contain;
-    /* Very low opacity — readable as "a presence" rather than "an image".
-       Higher values start fighting the chat panel for visual weight. */
-    opacity: 0.05;
+    /* Opacity tuned to "you notice it after a moment, not immediately" —
+       0.05 was theoretically right but practically invisible against the
+       grain + radial atmospheric stack already painted on body. 0.12 lets
+       the painted-purple body register as a soft presence in the gutter
+       without competing with the chat panel for attention. */
+    opacity: 0.12;
     pointer-events: none;
     /* Behind everything else fixed-positioned (e.g. the chat lightbox,
        which sets z-index 1000). */
