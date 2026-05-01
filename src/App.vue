@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useIdentity } from './identity'
 import AppLogo from './components/AppLogo.vue'
+import InAppBrowserBanner from './components/InAppBrowserBanner.vue'
 // Painted mascot for the splash. Vite hashes the URL for cache-busting.
 // Topbars throughout the app keep using AppLogo (the inline SVG) — at
 // 24-36px sizes the SVG looks crisper than scaling down a 1024 raster.
@@ -11,6 +12,7 @@ const { identity, error } = useIdentity()
 
 <template>
   <div class="app-shell">
+    <InAppBrowserBanner />
     <div v-if="error" class="app-state">
       <AppLogo size="md" />
       <p class="vw-text-danger" style="font-size:13px;">Sign-in failed: {{ String(error) }}</p>
