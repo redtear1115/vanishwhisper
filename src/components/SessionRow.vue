@@ -14,7 +14,7 @@
 // row can stop propagation cleanly without fighting <a>'s default
 // navigation. Trade-off: cmd-click to open in a new tab no longer works,
 // but this is an SPA chat list where that gesture has no real use case.
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   avatarInitials,
@@ -24,6 +24,7 @@ import {
   useLabels,
 } from '../labels'
 import type { ChatSessionRow } from '../sessions'
+import { useDocumentDismiss } from '../useDocumentDismiss'
 
 const props = defineProps<{
   session: ChatSessionRow
@@ -110,21 +111,11 @@ async function toggleState(target: 'pinned' | 'archived'): Promise<void> {
   }
 }
 
-// Close on outside-click and Esc, mirroring the chat header menu pattern.
-function onDocumentClick(): void {
-  if (menuOpen.value) menuOpen.value = false
-}
-function onDocumentKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && menuOpen.value) menuOpen.value = false
-}
-
-onMounted(() => {
-  document.addEventListener('click', onDocumentClick)
-  document.addEventListener('keydown', onDocumentKeydown)
-})
-onUnmounted(() => {
-  document.removeEventListener('click', onDocumentClick)
-  document.removeEventListener('keydown', onDocumentKeydown)
+// Close on outside-click and Esc. The trigger button + menu wrapper both
+// stop propagation, so anything reaching document is by definition outside.
+useDocumentDismiss({
+  onClickOutside: () => { menuOpen.value = false },
+  onEscape: () => { menuOpen.value = false },
 })
 </script>
 

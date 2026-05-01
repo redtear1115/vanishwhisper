@@ -2,8 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ChatMessageBubble from '../components/ChatMessageBubble.vue'
+import ChatRenamePanel from '../components/ChatRenamePanel.vue'
 import { getIdentity } from '../identity'
-import { markVisited, sessionDisplay, setHidden, setLabel, useLabels } from '../labels'
+import { markVisited, sessionDisplay, setHidden, useLabels } from '../labels'
 import { claimOrphanMessages } from '../migration'
 import {
   deleteMessage,
@@ -26,6 +27,7 @@ import {
   type SessionMeta,
 } from '../sessions'
 import { subscribeDeletedInMinutes } from '../users'
+import { useDocumentDismiss } from '../useDocumentDismiss'
 import { useVanish } from '../useVanish'
 
 const props = defineProps<{ id: string }>()
@@ -108,13 +110,12 @@ function onChatScroll(): void {
   stickToBottom = isNearBottom()
 }
 
-// Inline rename panel for the session and other-party display labels.
+// Inline rename panel — UI lives in ChatRenamePanel.vue. We hold only
+// the open flag here so other handlers (delete request below) can force
+// the panel closed via v-model when their UI takes over.
 const renaming = ref(false)
-const draftSessionName = ref('')
-const draftOtherName = ref('')
-const savingLabels = ref(false)
 // Header overflow menu (⋯). Open via the explicit button; close on
-// item-click, click-outside (document handler), or Esc (keydown handler).
+// item-click, click-outside, or Esc — both via useDocumentDismiss.
 const menuOpen = ref(false)
 
 // Sticker picker (input bar). Same open/close lifecycle as the menu and
@@ -139,29 +140,6 @@ const headerDisplay = computed(() => {
     otherShortLen: 16,
   })
 })
-
-function openRenamePanel(): void {
-  const current = labels.value.get(props.id)
-  draftSessionName.value = current?.sessionName ?? ''
-  draftOtherName.value = current?.otherName ?? ''
-  renaming.value = true
-}
-
-async function saveLabels(): Promise<void> {
-  savingLabels.value = true
-  error.value = null
-  try {
-    await setLabel(props.id, {
-      sessionName: draftSessionName.value,
-      otherName: draftOtherName.value,
-    })
-    renaming.value = false
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    savingLabels.value = false
-  }
-}
 
 let unsub: (() => void) | null = null
 let unsubMyMinutes: (() => void) | null = null
@@ -225,8 +203,6 @@ onMounted(async () => {
 })
 
 onMounted(() => {
-  document.addEventListener('click', onDocumentClick)
-  document.addEventListener('keydown', onDocumentKeydown)
   // Mark this chat as "seen up to now" so the home unread dot extinguishes
   // for any messages the user is about to ack-read in this view. Mirror
   // call on unmount picks up anything received during the visit.
@@ -238,8 +214,6 @@ onUnmounted(() => {
   unsubMyMinutes?.()
   unsubOtherMinutes?.()
   unsubSession?.()
-  document.removeEventListener('click', onDocumentClick)
-  document.removeEventListener('keydown', onDocumentKeydown)
   // Defensive: if the user navigates away with the lightbox still open,
   // restore the body scroll lock we set in openLightbox.
   document.body.style.overflow = ''
@@ -426,25 +400,9 @@ async function onReactAndClose(
   }
 }
 
-// Document-level click handler closes any open picker AND the header
-// overflow menu AND the sticker picker. Their open triggers and inner
-// buttons all use @click.stop so clicks INSIDE never reach this — anything
-// that does is by definition outside.
-function onDocumentClick(): void {
-  if (pickerOpenFor.value !== null) {
-    pickerOpenFor.value = null
-  }
-  if (menuOpen.value) {
-    menuOpen.value = false
-  }
-  if (stickerPickerOpen.value) {
-    stickerPickerOpen.value = false
-  }
-}
-
-// Lightbox open/close + Esc-to-close. Body scroll is locked while open so
-// the chat doesn't scroll under the overlay when the user wheels on the
-// image (browser pinch-zoom on mobile still works fine).
+// Lightbox open/close. Body scroll is locked while open so the chat
+// doesn't scroll under the overlay when the user wheels on the image
+// (browser pinch-zoom on mobile still works fine).
 function openLightbox(url: string): void {
   lightboxUrl.value = url
   document.body.style.overflow = 'hidden'
@@ -455,12 +413,23 @@ function closeLightbox(): void {
   document.body.style.overflow = ''
 }
 
-function onDocumentKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Escape') return
-  if (lightboxUrl.value !== null) closeLightbox()
-  if (menuOpen.value) menuOpen.value = false
-  if (stickerPickerOpen.value) stickerPickerOpen.value = false
-}
+// Outside-click + Esc dismiss for every transient popover in this view.
+// Open triggers and inner content all use @click.stop so anything reaching
+// document is outside by definition — the click handler closes ALL of them
+// without hit-testing. Esc additionally dismisses the lightbox (clicks on
+// it are absorbed by the overlay, so it doesn't need outside-click).
+useDocumentDismiss({
+  onClickOutside: () => {
+    pickerOpenFor.value = null
+    menuOpen.value = false
+    stickerPickerOpen.value = false
+  },
+  onEscape: () => {
+    if (lightboxUrl.value !== null) closeLightbox()
+    menuOpen.value = false
+    stickerPickerOpen.value = false
+  },
+})
 
 // Reply target lookup. We pull from messages.value (the unfiltered store)
 // rather than visibleMessages so a target that's been auto-vanished still
@@ -557,7 +526,9 @@ async function onCancelOrReject(): Promise<void> {
 // where the menu sits open during the async operation.
 function onMenuRename(): void {
   menuOpen.value = false
-  openRenamePanel()
+  // ChatRenamePanel seeds its own draft fields off the labels store via
+  // a watch on `open`, so just flipping the flag is enough.
+  renaming.value = true
 }
 
 async function onMenuRequestDelete(): Promise<void> {
@@ -619,56 +590,12 @@ async function onAgreeDelete(): Promise<void> {
       </div>
     </header>
 
-    <!-- Rename panel -->
-    <div v-if="renaming" class="rename-panel">
-      <label class="rename-field">
-        <span class="rename-label">Session name</span>
-        <input
-          v-model="draftSessionName"
-          class="vw-input"
-          :disabled="savingLabels"
-          placeholder="e.g. Project chat"
-          maxlength="64"
-        />
-      </label>
-      <label class="rename-field">
-        <span class="rename-label">Other party</span>
-        <input
-          v-model="draftOtherName"
-          class="vw-input"
-          :disabled="savingLabels"
-          placeholder="e.g. Alice"
-          maxlength="64"
-        />
-      </label>
-      <p class="rename-hint">Stored locally only — never uploaded.</p>
-
-      <!-- Underlying ids — only place these surface in the UI. The rename
-           panel is the natural home: user is in "manage labels" mode here,
-           and seeing what each label "covers" helps when verifying you're
-           naming the right person. -->
-      <div class="rename-meta">
-        <p><span class="rename-meta-label">Session id</span> <code>{{ props.id }}</code></p>
-        <p v-if="opened">
-          <span class="rename-meta-label">Other UID</span> <code>{{ opened.otherParticipant }}</code>
-        </p>
-      </div>
-
-      <div class="rename-actions">
-        <button
-          type="button"
-          class="vw-btn-primary"
-          :disabled="savingLabels"
-          @click="saveLabels"
-        >{{ savingLabels ? 'Saving…' : 'Save' }}</button>
-        <button
-          type="button"
-          class="rename-cancel"
-          :disabled="savingLabels"
-          @click="renaming = false"
-        >Cancel</button>
-      </div>
-    </div>
+    <ChatRenamePanel
+      v-model:open="renaming"
+      :session-id="props.id"
+      :other-uid="opened?.otherParticipant ?? null"
+      @error="(msg) => (error = msg)"
+    />
 
     <!-- Mutual-delete banner. Two flavours depending on who requested. -->
     <div v-if="deleteRequestState === 'mine'" class="delete-banner mine">
@@ -942,79 +869,6 @@ async function onAgreeDelete(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-/* ── Rename panel ── */
-.rename-panel {
-  padding: 14px 16px;
-  background: var(--vw-surface2);
-  border-bottom: 0.5px solid var(--vw-border);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.rename-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.rename-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vw-text3);
-}
-
-.rename-hint {
-  font-size: 11px;
-  color: var(--vw-text3);
-  margin: 0;
-}
-
-/* Underlying ids info — sits between the label inputs and the action row,
-   visually separated by a top border so it's clearly "what's actually
-   there" reference data, not editable. */
-.rename-meta {
-  margin: 4px 0 2px;
-  padding-top: 10px;
-  border-top: 0.5px solid var(--vw-border);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--vw-text3);
-}
-.rename-meta p { margin: 0; }
-.rename-meta-label {
-  display: inline-block;
-  min-width: 70px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 10px;
-}
-.rename-meta code {
-  word-break: break-all;
-}
-
-.rename-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.rename-cancel {
-  background: none;
-  border: 0.5px solid var(--vw-border2);
-  border-radius: 8px;
-  padding: 8px 14px;
-  color: var(--vw-text2);
-  font-size: 13px;
-  cursor: pointer;
-}
-.rename-cancel:hover { color: var(--vw-purple-pale); border-color: var(--vw-purple-mid); }
-.rename-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Mutual-delete banner ── */
 .delete-banner {
