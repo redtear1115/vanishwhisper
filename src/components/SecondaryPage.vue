@@ -41,7 +41,10 @@ defineProps<{
 .secondary-page {
   display: flex;
   flex-direction: column;
+  /* 100dvh tracks the visible viewport under iOS Safari URL bar / keyboard
+     chrome. 100vh fallback for browsers without dvh support (pre-2022). */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .secondary-page-body {

@@ -68,7 +68,7 @@ const archivedSessions = computed(() =>
           v-if="identity"
           :to="{ name: 'profile' }"
           class="me-pill"
-          :title="`You — ${identity.uid}\nClick to open profile`"
+          :title="`You · ${identity.uid}\nClick to open profile`"
           >{{ identity.uid.slice(0, 10) }}…</router-link
         >
         <router-link
@@ -94,7 +94,7 @@ const archivedSessions = computed(() =>
       </p>
       <div v-else-if="sessions.length === 0" class="empty-hero">
         <img v-if="helloSticker" :src="helloSticker" alt="" class="empty-hero-sticker" />
-        <p class="empty-hint">No sessions yet — share your UID to start.</p>
+        <p class="empty-hint">No sessions yet. Share your UID to start.</p>
       </div>
 
       <template v-else>
@@ -123,7 +123,7 @@ const archivedSessions = computed(() =>
           <p class="empty-hint">
             {{
               archivedSessions.length > 0
-                ? 'Nothing here — your other sessions are archived below.'
+                ? 'Nothing here. Your other sessions are archived below.'
                 : 'No active sessions.'
             }}
           </p>
@@ -169,7 +169,10 @@ const archivedSessions = computed(() =>
 .home {
   display: flex;
   flex-direction: column;
+  /* 100dvh tracks the visible viewport under iOS Safari chrome (matches
+     .chat-wrap and .secondary-page); 100vh fallback covers older browsers. */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .topbar-right {
@@ -180,7 +183,9 @@ const archivedSessions = computed(() =>
 
 /* The "you" pill mirrors the .vw-pill aesthetic but is interactive — small
    monospace UID prefix that links to /profile. Sits between the logo and
-   the gear icon as a unobtrusive identity anchor. */
+   the gear icon as a unobtrusive identity anchor. Hit area extended to
+   ≥44px tall via ::before; horizontal inset asymmetric since the pill is
+   already wide enough to clear the 44px width minimum on its own. */
 .me-pill {
   font-size: 11px;
   font-family: var(--vw-font-mono);
@@ -190,9 +195,16 @@ const archivedSessions = computed(() =>
   color: var(--vw-text2);
   border: 0.5px solid var(--vw-border);
   text-decoration: none;
+  position: relative;
   transition:
     color 0.15s,
     border-color 0.15s;
+}
+.me-pill::before {
+  content: '';
+  position: absolute;
+  inset: -10px -4px;
+  border-radius: 99px;
 }
 .me-pill:hover {
   color: var(--vw-purple-pale);
@@ -209,9 +221,21 @@ const archivedSessions = computed(() =>
   border-radius: 50%;
   color: var(--vw-text2);
   text-decoration: none;
+  position: relative;
   transition:
     color 0.15s,
     background 0.15s;
+}
+/* Hit area extended to 44×44 — same pattern as the chat .back-btn. The
+   profile-link sits at the topbar-right edge; the only horizontal neighbour
+   is the me-pill on its left with gap:8px, so a small overlap there is
+   acceptable (DOM-order disambiguation picks profile-link, which is the
+   later sibling). */
+.profile-link::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
 }
 .profile-link:hover {
   color: var(--vw-purple-pale);
@@ -263,8 +287,12 @@ const archivedSessions = computed(() =>
   padding: 24px 0 32px;
 }
 .empty-hero-sticker {
-  width: 140px;
-  height: 140px;
+  /* clamp lets the hero breathe on tablet and stay modest on tiny phones;
+     previously fixed at 140px regardless of viewport. Range straddles the
+     original size — slightly larger on tablet, slightly smaller on small
+     phones — so this IS still the brand hero, just responsive. */
+  width: clamp(120px, 28vw, 168px);
+  height: clamp(120px, 28vw, 168px);
   object-fit: contain;
   /* 80% feels "settled" — full opacity is too presentational, lower
      and the painted lines start to dissolve against the dark bg. */
@@ -285,8 +313,10 @@ const archivedSessions = computed(() =>
   padding: 14px 4px;
 }
 .empty-inline-sticker {
-  width: 56px;
-  height: 56px;
+  /* Modest scaling so the row-aligned sleep sticker tracks viewport size
+     without dominating the inline empty-state row. */
+  width: clamp(48px, 12vw, 64px);
+  height: clamp(48px, 12vw, 64px);
   object-fit: contain;
   opacity: 0.7;
   flex-shrink: 0;
@@ -320,7 +350,16 @@ const archivedSessions = computed(() =>
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  position: relative;
   transition: color 0.15s;
+}
+/* Hit area extended to ≥44px tall — see .me-pill / .vw-back-link for the
+   pattern. Horizontal inset minimal because the toggle sits at the start of
+   its row with no adjacent buttons. */
+.archive-toggle::before {
+  content: '';
+  position: absolute;
+  inset: -10px -8px;
 }
 .archive-toggle:hover {
   color: var(--vw-text2);

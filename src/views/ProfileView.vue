@@ -116,7 +116,7 @@ function formatFingerprint(fp: string | null): string {
     <div class="vw-card vanish-card">
       <div class="vw-field-label">Messages I receive vanish after</div>
       <p class="hint">
-        Applies to messages OTHERS send to you — once you read them, they auto-delete after this
+        Applies to messages OTHERS send to you: once you read them, they auto-delete after this
         many minutes. Their setting controls how long messages YOU send to them stick around.
       </p>
 
@@ -203,10 +203,20 @@ function formatFingerprint(fp: string | null): string {
   color: var(--vw-danger);
   text-decoration: none;
   cursor: pointer;
+  position: relative;
   transition:
     color 0.15s,
     border-color 0.15s,
     background 0.15s;
+}
+/* Hit area extended to ≥44px tall via ::before. The migrate button
+   sits alone inside its card with no adjacent buttons, so the full
+   inset is safe. */
+.migrate-btn::before {
+  content: '';
+  position: absolute;
+  inset: -10px -6px;
+  border-radius: 6px;
 }
 .migrate-btn:hover {
   border-color: var(--vw-danger);
@@ -218,10 +228,6 @@ function formatFingerprint(fp: string | null): string {
   color: var(--vw-text3);
   line-height: 1.5;
   margin: 6px 0;
-}
-.hint.subtle {
-  font-size: 10px;
-  opacity: 0.85;
 }
 /* Danger-tinted hint — for the "this is irreversible" line that sits
    right above a danger-outlined action. Same colour as the button so
@@ -252,7 +258,18 @@ function formatFingerprint(fp: string | null): string {
   background: none;
   color: var(--vw-text2);
   cursor: pointer;
+  position: relative;
   transition: all 0.15s;
+}
+/* Hit area extended to ≥44px tall while preserving the dense pill width
+   (5m / 15m / 30m / 1h / 6h / 24h need to fit on one row on a phone).
+   Horizontal inset minimal because pills sit adjacent with gap:6px — a
+   3px extension each side leaves no overlap in the gap. */
+.preset-btn::before {
+  content: '';
+  position: absolute;
+  inset: -10px -3px;
+  border-radius: 99px;
 }
 .preset-btn:hover:not(:disabled) {
   color: var(--vw-purple-pale);
@@ -281,6 +298,13 @@ function formatFingerprint(fp: string | null): string {
 }
 .custom-input {
   max-width: 120px;
+  /* Vertical padding lifted from theme.css default (9px) → 12px so the
+     touch surface lands at ~44px tall. .vw-input's global padding stays
+     at 9px so denser surfaces (chat search, future inline inputs) aren't
+     forced wide; this override scopes the touch-target bump to the
+     vanish-setting custom field, which is the only number input on
+     mobile-primary form surfaces today. */
+  padding-block: 12px;
 }
 
 .actions {

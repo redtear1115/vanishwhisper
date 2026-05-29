@@ -134,8 +134,8 @@ useDocumentDismiss({
         :class="{ theirs: deletePill.theirs }"
         :title="
           deletePill.theirs
-            ? 'The other party wants to delete — open to respond'
-            : 'Waiting for the other party to agree to delete'
+            ? 'The other party wants to delete. Open to respond.'
+            : 'Waiting for the other party to agree to delete.'
         "
         >{{ deletePill.text }}</span
       >
@@ -281,23 +281,34 @@ useDocumentDismiss({
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Hit area extended to 44×44 via ::before — same pattern as chat
+     .header-menu-btn. The row-menu-btn sits at the trailing edge of each
+     session row with no adjacent buttons, so the full inset is safe. */
+  position: relative;
   transition:
     color 0.15s,
     background 0.15s;
+}
+.row-menu-btn::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
 }
 .row-menu-btn:hover {
   color: var(--vw-purple-pale);
   background: color-mix(in srgb, var(--vw-purple-pale) 8%, transparent);
 }
-/* Surface chrome inherited from .vw-popover. Local rule carries the
-   per-instance positioning, layout, the slightly cooler --vw-border2
-   border colour, and the heavier 24px shadow that the row's menu uses
-   to read above adjacent rows in a dense list. */
+/* Surface chrome inherited from .vw-popover. Sits in the --vw-z-dropdown
+   slot of the theme's z-layer system (same as the chat header menu).
+   Local rule carries the per-instance positioning, layout, the slightly
+   cooler --vw-border2 border colour, and the heavier 24px shadow that
+   the row's menu uses to read above adjacent rows in a dense list. */
 .row-menu {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 20;
+  z-index: var(--vw-z-dropdown);
   min-width: 140px;
   display: flex;
   flex-direction: column;
