@@ -28,7 +28,12 @@
   /* ── Text ── */
   --vw-text: #ede0ff;
   --vw-text2: #a688c8;
-  --vw-text3: #6b4d8a;
+  /* Lifted from #6b4d8a (2.85:1 on --vw-bg, 2.53:1 on --vw-surface2, both
+     WCAG AA fails) to #9676bb. New ratios: 5.23:1 vs bg, 4.64:1 vs
+     surface2 — both clear AA-normal (≥4.5). Hue held near 264° so the
+     hint/timestamp/eyebrow/placeholder voice stays in the same cool-violet
+     family as --vw-text and --vw-text2 rather than drifting neutral. */
+  --vw-text3: #9676bb;
 
   /* ── Danger ── */
   --vw-danger: #e85c7a;
@@ -74,6 +79,24 @@
   --vw-font-mono:
     'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', Menlo, 'PingFang TC',
     'Microsoft JhengHei', 'Noto Sans Mono CJK TC', monospace;
+
+  /* ── Z-layer system ──
+     Semantic stack ordered quietest → loudest. New popovers / modals /
+     toasts pick the matching slot rather than introducing fresh magic
+     numbers — keeps stacking decisions reviewable in one place and lets
+     a future redesign re-tune the whole hierarchy with a single edit.
+     - dropdown: header / row ⋯ menus, sticker picker, reaction picker
+     - sticky:   sticky bars, mini-overlays that pin to the viewport
+     - modal:    fullscreen takeovers (lightbox, future confirm modals)
+     - toast:    transient feedback above modal content
+     - tooltip:  pointer-anchored, must always win
+     Backdrop sits just under its modal so multiple modals nest predictably. */
+  --vw-z-dropdown: 50;
+  --vw-z-sticky: 100;
+  --vw-z-modal-backdrop: 800;
+  --vw-z-modal: 900;
+  --vw-z-toast: 1000;
+  --vw-z-tooltip: 1100;
 
   /* ── Atmosphere ──
      A 160×160 SVG noise tile, served as a data URL so it costs zero extra
@@ -290,7 +313,11 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  /* Vertical padding lifted from 10px → 12px so the canonical primary CTA
+     lands at ~44px tall on touch (PRODUCT.md commit). Affects every primary
+     surface (Home "New encrypted session", Profile "Save", Create/Join/Migrate
+     CTAs); the chat surface uses .vw-btn-send instead so it's unaffected. */
+  padding: 12px 16px;
   background: var(--vw-purple-deep);
   border: none;
   border-radius: 8px;
@@ -315,6 +342,19 @@ code {
   justify-content: center;
   flex-shrink: 0;
   transition: background 0.15s;
+  /* Anchor for the invisible hit-area pseudo below — keeps visual
+     density at 36px but extends the tap surface to WCAG-AAA 44×44. */
+  position: relative;
+}
+/* Touch target expansion. The painted-density aesthetic wants the send
+   pip at 36px, but PRODUCT.md commits to ≥44×44 tap targets. The pseudo
+   sits transparent behind the button surface and inherits the click
+   target — visible chrome stays 36×36, hit area becomes 44×44. */
+.vw-btn-send::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
 }
 .vw-btn-send:hover {
   background: var(--vw-purple-deep);
@@ -414,6 +454,17 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* Hit area extended to ≥44px tall via ::before — visible chrome stays
+     small (back-link sits next to other secondary-page chrome where a
+     button-sized control would overweight the layout). Asymmetric inset
+     because back links live at the top-left edge and don't have horizontal
+     neighbours to overlap with. */
+  position: relative;
+}
+.vw-back-link::before {
+  content: '';
+  position: absolute;
+  inset: -12px -8px;
 }
 .vw-back-link:hover {
   color: var(--vw-purple-pale);
